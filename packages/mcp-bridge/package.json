@@ -1,0 +1,9 @@
+{
+  "name": "ember-mcp",
+  "version": "1.0.0",
+  "description": "Ember 事务进度中心的 stdio MCP 桥（转发到远程 Streamable HTTP）",
+  "type": "module",
+  "bin": { "ember-mcp": "./bin/ember-mcp.js" },
+  "files": ["bin"],
+  "license": "MIT"
+}

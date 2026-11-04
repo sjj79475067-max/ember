@@ -1,0 +1,13 @@
+{
+  "name": "ember",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --filter @ember/web dev",
+    "build": "pnpm --filter @ember/web build",
+    "start": "pnpm --filter @ember/web start",
+    "db:push": "pnpm --filter @ember/web db:push",
+    "test": "pnpm --filter @ember/web test"
+  }
+}

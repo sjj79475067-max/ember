@@ -1,0 +1,26 @@
+name: ember
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: ember:latest
+    restart: unless-stopped
+    ports:
+      - "${EMBER_PORT:-3000}:3000"
+    environment:
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:?请在 .env 里设置 SESSION_SECRET}
+      DATABASE_URL: file:/app/data/ember.db
+      TZ: Asia/Shanghai
+    volumes:
+      - ember-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  ember-data:
