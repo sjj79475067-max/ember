@@ -45,8 +45,8 @@ export function FilesClient({ initial, projects, focus }: { initial: F[]; projec
         </div>
         <Button onClick={() => setOpen(true)}><Plus /> 登记位置</Button>
       </header>
-      <div className="mb-3 flex items-center gap-2">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索资料…" className="h-8 w-56" />
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索资料…" className="h-8 min-w-0 w-full sm:w-56" />
         <button onClick={() => setOnlyStale((v) => !v)} className={`flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs ${onlyStale ? "border-[var(--color-warn)] bg-[var(--color-warn)]/10 text-[oklch(0.5_0.12_70)]" : "border-[var(--color-line)] text-[var(--color-muted)]"}`}>
           <CircleAlert className="size-3.5" /> 待核验 {staleCount > 0 && `(${staleCount})`}
         </button>

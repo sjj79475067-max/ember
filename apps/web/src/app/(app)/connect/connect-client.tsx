@@ -78,7 +78,7 @@ export function ConnectClient({ base, user, tokens }: { base: string; user: stri
           {fresh && (
             <div className="mt-3 rounded-lg border border-[var(--color-ok)]/30 bg-[var(--color-ok)]/8 p-3">
               <p className="text-xs font-medium text-[var(--color-ok)]">已生成（只显示一次，请立即复制保存）</p>
-              <div className="mt-1 flex items-center gap-2">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded bg-[var(--color-card)] px-2 py-1.5 font-mono text-[12px]">{fresh.token}</code>
                 <CopyBtn text={fresh.token} />
               </div>
@@ -97,8 +97,8 @@ export function ConnectClient({ base, user, tokens }: { base: string; user: stri
           <Card key={c.id}>
             <CardContent className="p-4">
               <div className="flex items-center gap-2"><span className="text-[var(--color-brand)]">{c.icon}</span><p className="text-sm font-medium">{c.title}</p></div>
-              <div className="mt-2 flex items-start gap-2">
-                <pre className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-[oklch(0.22_0.01_80)] p-3 text-[12px] leading-5 text-[oklch(0.92_0.01_90)]">{c.cmd ?? c.code}</pre>
+              <div className="mt-2 flex flex-wrap items-start gap-2">
+                <pre className="min-w-0 flex-1 basis-64 overflow-x-auto rounded-lg bg-[oklch(0.22_0.01_80)] p-3 text-[12px] leading-5 text-[oklch(0.92_0.01_90)]">{c.cmd ?? c.code}</pre>
                 <CopyBtn text={c.cmd ?? c.code ?? ""} />
               </div>
               <p className="mt-1.5 text-[11px] text-[var(--color-muted)]">{c.note}</p>
@@ -113,7 +113,7 @@ export function ConnectClient({ base, user, tokens }: { base: string; user: stri
           <div className="divide-y divide-[var(--color-line)]">
             {tokens.length === 0 && <p className="py-3 text-xs text-[var(--color-muted)]">还没有 Token。</p>}
             {tokens.map((t) => (
-              <div key={t.id} className="flex items-center gap-2 py-2 text-[13px]">
+              <div key={t.id} className="flex flex-wrap items-center gap-2 py-2 text-[13px]">
                 <span className="font-medium">{t.name}</span>
                 <Badge>{t.agentType}</Badge>
                 <code className="font-mono text-[11px] text-[var(--color-muted)]">{t.prefix}…</code>

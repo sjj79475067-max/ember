@@ -12,10 +12,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const [hits, setHits] = useState<Hit[]>([]);
 
   useEffect(() => {
-    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); onOpenChange(true); }
-      if (e.key === "Escape") onOpenChange(false);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); onOpenChange(!open); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

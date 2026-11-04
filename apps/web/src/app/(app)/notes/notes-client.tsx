@@ -36,17 +36,17 @@ export function NotesClient({ initial, projects }: { initial: N[]; projects: Arr
 
   return (
     <div className="mx-auto max-w-4xl p-6 lg:p-8">
-      <header className="mb-5 flex items-center justify-between gap-3">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">知识库</h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">零散但重要的信息：咨询结论、规则、经验、账号归属。Agent 可直接写入与检索。</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative"><Search className="absolute left-2.5 top-2.5 size-4 text-[var(--color-muted)]" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="h-9 w-40 pl-8" /></div>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none"><Search className="absolute left-2.5 top-2.5 size-4 text-[var(--color-muted)]" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="h-9 w-full pl-8 sm:w-40" /></div>
           <Button onClick={() => start()}><Plus /> 新建</Button>
         </div>
       </header>
-      <div className="columns-1 gap-3 sm:columns-2">
+      <div className="columns-1 gap-3 [column-fill:balance] sm:columns-2">
         {shown.map((n) => {
           const p = projects.find((x) => x.id === n.projectId);
           return (

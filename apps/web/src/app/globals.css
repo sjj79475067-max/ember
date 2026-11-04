@@ -30,3 +30,9 @@ body {
   font-family: ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+main { overflow-x: clip; }
+/* 极窄屏下网格按单列排布，避免内容被 clip 掉 */
+@media (max-width: 419px) {
+  .grid { grid-template-columns: minmax(0, 1fr) !important; }
+}

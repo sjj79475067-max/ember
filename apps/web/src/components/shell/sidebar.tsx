@@ -34,7 +34,8 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
 
   return (
     <>
-      <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-card)]/60 px-3 py-4">
+      <MobileNav path={path} unread={unread} onSearch={() => setPaletteOpen(true)} />
+      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-card)]/60 px-3 py-4 md:flex">
         <Link href="/" className="mb-4 flex items-center gap-2 px-2">
           <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-brand)] text-sm font-bold text-white">淬</span>
           <span className="font-semibold tracking-tight">Ember</span>
@@ -78,6 +79,40 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
         </div>
       </aside>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+    </>
+  );
+}
+
+function MobileNav({ path, unread, onSearch }: { path: string; unread: number; onSearch: () => void }) {
+  const ITEMS = [
+    { href: "/", label: "总览", icon: LayoutDashboard },
+    { href: "/projects", label: "项目", icon: FolderKanban },
+    { href: "/meetings", label: "会议", icon: CalendarCheck },
+    { href: "/inbox", label: "提醒", icon: Bell },
+    { href: "/settings", label: "设置", icon: Settings },
+  ];
+  return (
+    <>
+      <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-card)] px-3 md:hidden">
+        <Link href="/" className="flex items-center gap-1.5">
+          <span className="grid size-6 place-items-center rounded-md bg-[var(--color-brand)] text-[11px] font-bold text-white">淬</span>
+          <span className="text-sm font-semibold">Ember</span>
+        </Link>
+        <button onClick={onSearch} className="ml-auto rounded-md p-1.5 text-[var(--color-muted)]"><Search className="size-4" /></button>
+        <ThemeToggle />
+      </header>
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex h-14 items-stretch justify-around border-t border-[var(--color-line)] bg-[var(--color-card)]/95 backdrop-blur md:hidden">
+        {ITEMS.map((n) => {
+          const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
+          return (
+            <Link key={n.href} href={n.href} className={`relative flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] ${active ? "text-[var(--color-brand)]" : "text-[var(--color-muted)]"}`}>
+              <n.icon className="size-[18px]" />
+              {n.label}
+              {n.href === "/inbox" && unread > 0 && <span className="absolute right-[22%] top-1.5 size-1.5 rounded-full bg-[var(--color-danger)]" />}
+            </Link>
+          );
+        })}
+      </nav>
     </>
   );
 }

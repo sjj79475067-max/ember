@@ -36,12 +36,12 @@ export function ProjectsClient({ initial, openNew }: { initial: P[]; openNew: bo
 
   return (
     <div className="mx-auto max-w-6xl p-6 lg:p-8">
-      <header className="mb-6 flex items-center justify-between gap-4">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">项目</h1>
-        <div className="flex items-center gap-2">
-          <div className="relative">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none">
             <Search className="absolute left-2.5 top-2.5 size-4 text-[var(--color-muted)]" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="h-9 w-44 pl-8" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="h-9 w-full pl-8 sm:w-44" />
           </div>
           <Button onClick={() => setOpen(true)}><Plus /> 新建项目</Button>
         </div>
