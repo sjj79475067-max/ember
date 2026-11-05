@@ -24,6 +24,10 @@ ALTER TABLE `policies` ADD `approvedBy` text DEFAULT '' NOT NULL;
 --> statement-breakpoint
 ALTER TABLE `policies` ADD `approvedAt` integer;
 --> statement-breakpoint
+ALTER TABLE `items` ADD `needsReview` integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE `items` ADD `supersededBy` text DEFAULT '' NOT NULL;
+--> statement-breakpoint
 CREATE INDEX `idx_items_next` ON `items` (`projectId`, `status`, `dueAt`);
 --> statement-breakpoint
 -- 升级前已存在的「必读+全局+不限工具」条例：改为只在用户批准后按「全部写操作」生效，避免升级后全局卡死

@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Check, Circle, Ban, Shuffle, ChevronDown, ChevronRight, Calendar, Files as FilesIcon, MessageSquare, Scale, ListChecks, History, Link2, Inbox, ArrowRightLeft, Pencil } from "lucide-react";
+import { Plus, Check, Circle, Ban, Shuffle, ChevronDown, ChevronRight, Calendar, Files as FilesIcon, MessageSquare, Scale, ListChecks, History, Link2, Inbox, ArrowRightLeft, Pencil, TrendingUp, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { callTool } from "@/lib/ui-api";
 import { fmtDate, relTime, STATUS_LABEL, KIND_LABEL, daysLeft } from "@/lib/utils";
 import { toast } from "sonner";
 
-type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string };
+type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string; needsReview: number; supersededBy: string };
 type Ev = { id: string; itemId: string; actorType: string; actorName: string; action: string; fromStatus: string; toStatus: string; note: string; evidence: string; createdAt: number };
 type Data = {
   project: { id: string; key: string; name: string; kind: string; status: string; summaryMd: string; dueAt: number | null; githubRepo: string; localRoot: string; archiveNote: string };
@@ -24,7 +24,7 @@ type Data = {
   files: Array<{ id: string; label: string; machine: string; path: string; url: string; archiveTo: string; status: string; lastVerifiedAt: number | null }>;
   policies: Array<{ id: string; title: string; bodyMd: string; required: number; version: number }>;
   events: Ev[];
-  progress: { total: number; done: number; doing: number; blocked: number; changed: number; overdue: number };
+  progress: { total: number; done: number; doing: number; blocked: number; changed: number; overdue: number; needsReview: number };
 };
 
 const TABS = [
@@ -66,6 +66,7 @@ export function ProjectClient({ data, projects }: { data: Data; projects: Array<
               {data.progress.overdue > 0 && <Badge tone="danger">{data.progress.overdue} 逾期</Badge>}
               {data.progress.blocked > 0 && <Badge tone="warn">{data.progress.blocked} 阻塞</Badge>}
               {data.progress.changed > 0 && <Badge tone="warn">{data.progress.changed} 变更</Badge>}
+              {data.progress.needsReview > 0 && <Badge tone="danger">{data.progress.needsReview} 待核实</Badge>}
             </div>
           </div>
           <div className="w-56">
@@ -133,6 +134,38 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
     toast.success("已记录变更"); onChange();
   }
 
+  async function progress(it: Item) {
+    const note = window.prompt(`记录「${it.title}」的进展（做了什么 / 拿到什么 / 下一步）：`, "");
+    if (!note || !note.trim()) return;
+    const r = await callTool("checklist_progress", { item_id: it.id, note: note.trim() });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    toast.success("进展已记录在原任务上"); onChange();
+  }
+
+  async function supersede(it: Item) {
+    const title = window.prompt("这件事现在是新版本了：新版标题？\n（旧任务会关闭并注明被新版取代，历史保留）", it.title);
+    if (!title || !title.trim()) return;
+    const detail = window.prompt("与旧版的差异 / 新要求（可留空）：", "") ?? "";
+    const r = await callTool("checklist_supersede", { item_id: it.id, title: title.trim(), detail_md: detail.trim() || undefined });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    toast.success("已升级为新版本"); onChange();
+  }
+
+  async function toggleReview(it: Item, ok: boolean) {
+    if (!ok) return;
+    const evidence = window.prompt(`确认「${it.title}」已完成。请补充验收结论（做到什么程度 / 在哪验证）：`, it.evidence);
+    if (evidence === null) return;
+    const r = await callTool("checklist_update", { item_id: it.id, status: "done", evidence: evidence.trim() || it.evidence, expected_version: it.version });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    toast.success("已核实"); onChange();
+  }
+
+  async function reopen(it: Item) {
+    const r = await callTool("checklist_update", { item_id: it.id, status: "doing", note: "证据为进度描述，改为进行中", expected_version: it.version });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    toast.success("已改回进行中，可继续记录进展"); onChange();
+  }
+
   async function move(it: Item, project: string) {
     const r = await callTool("item_move", { item_id: it.id, project });
     if (!r.ok) return toast.error(r.error ?? "移动失败");
@@ -190,11 +223,20 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
           {it.doneDefinition && it.status !== "done" && <p className="mt-0.5 text-[12px] text-[var(--color-muted)]">完成标准：{it.doneDefinition}</p>}
           {it.status === "blocked" && it.blockReason && <p className="mt-0.5 text-[12px] text-[var(--color-danger)]">阻塞：{it.blockReason}</p>}
           {it.evidence && <p className="mt-0.5 line-clamp-1 text-[12px] text-[var(--color-muted)]">证据：{it.evidence}</p>}
+          {it.detailMd && <details className="mt-1 text-[12px] text-[var(--color-muted)]"><summary className="cursor-pointer select-none">进展记录（{(it.detailMd.match(/【/g) ?? []).length} 条）</summary><div className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap border-l-2 border-[var(--color-line)] pl-2">{it.detailMd}</div></details>}
+          {it.needsReview === 1 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-[var(--color-warn)]/10 px-2 py-1 text-[12px]">
+              <span className="font-medium text-[var(--color-warn)]">证据像进度，不是完成结果</span>
+              <button className="underline" onClick={() => toggleReview(it, true)}>确认已完成</button>
+              <button className="underline" onClick={() => reopen(it)}>改回进行中</button>
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <StatusBadge status={it.status} />
             {it.priority !== "P1" && <Badge tone={it.priority === "P0" ? "danger" : "default"}>{it.priority}</Badge>}
             {it.dueAt && <Badge tone={d! < 0 ? "danger" : d! <= 2 ? "warn" : "default"}><Calendar className="size-3" />{fmtDate(it.dueAt)}{d! < 0 ? ` 逾期${-d!}天` : ""}</Badge>}
             {it.claimedBy && <Badge tone="brand">认领中</Badge>}
+            {it.supersededBy && <Badge tone="warn">已被新版取代</Badge>}
             {it.sourceType === "meeting" && <Badge>来自会议</Badge>}
             {it.sourceProjectKey && <Badge>来自 {it.sourceProjectKey}</Badge>}
             {it.detailMd && <span className="text-[11px] text-[var(--color-muted)]">{it.detailMd}</span>}
@@ -203,6 +245,8 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
         <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <IconBtn title="标记阻塞" onClick={() => block(it)}><Ban /></IconBtn>
           <IconBtn title="记录变更" onClick={() => change(it)}><Shuffle /></IconBtn>
+          <IconBtn title="记录进展（不新建任务）" onClick={() => progress(it)}><TrendingUp /></IconBtn>
+          <IconBtn title="需求变了：升级为新版本" onClick={() => supersede(it)}><GitBranch /></IconBtn>
           {grouped && <GroupMenu item={it} groups={groups.groups} onPick={(n) => setGroup(it, n)} />}
           <MoveMenu projects={projects.filter((p) => p.id !== projectId)} onPick={(pid) => move(it, pid)} />
         </div>

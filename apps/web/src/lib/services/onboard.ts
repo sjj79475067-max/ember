@@ -1,5 +1,5 @@
 import { db, s } from "@/lib/db";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { listProjects, getInbox } from "./projects";
 import { pullReminders, countOpen } from "./reminders";
 import { listPolicies } from "./policies";
@@ -15,6 +15,9 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
   const claimedByMe = db.select().from(s.items).where(eq(s.items.claimedBy, agent.sessionId)).all();
   const recentMeetings = db.select().from(s.meetings).orderBy(desc(s.meetings.heldAt)).limit(5).all();
   const changelog = db.select().from(s.agentChangelog).orderBy(desc(s.agentChangelog.createdAt)).limit(5).all();
+  const mojibake = db.select().from(s.items).where(and(eq(s.items.status, "changed"), eq(s.items.needsReview, 0))).all()
+    .filter((i) => i.evidence.trim().length <= 12 || /^(进行中|继续|有进展|处理中|做了一部分)/.test(i.evidence.trim())).slice(0, 10);
+  const suspiciousDone = db.select().from(s.items).where(eq(s.items.needsReview, 1)).all().slice(0, 10);
   return {
     you: { agent_name: agent.name, session_id: agent.sessionId },
     projects: projects.filter((p) => p.status === "active").map((p) => ({
@@ -32,6 +35,10 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
     your_claims: claimedByMe.map((i) => ({ item_id: i.id, title: i.title, status: i.status, project_id: i.projectId })),
     in_progress_by_others: openItems.filter((i) => i.claimedBy && i.claimedBy !== agent.sessionId).map((i) => ({ item_id: i.id, title: i.title, claimed_by: i.claimedBy })),
     recent_meetings: recentMeetings.map((m) => ({ id: m.id, title: m.title, project_id: m.projectId, held_at: m.heldAt })),
+    needs_attention: {
+      done_evidence_suspect: suspiciousDone.map((i) => ({ item_id: i.id, title: i.title, evidence: i.evidence.slice(0, 120) })),
+      changed_without_detail: mojibake.map((i) => ({ item_id: i.id, title: i.title, note: i.evidence })),
+    },
     since_last_time: changelog.map((c) => ({ version: c.version, title: c.title })),
     how_to_work: WORKFLOW,
   };
@@ -43,8 +50,10 @@ const WORKFLOW = [
   "3. 看清单：checklist_list(project, status='open')，不要凭记忆假设。项目分类多时用 group 过滤；分组用 project_groups 设置。",
   "4. 开工：claim_item 认领（会显示他人认领情况），着手做；记得每 30 分钟 sync 一次心跳。",
   "5. 记录：会议由 meeting_import 归档并自动抽取事务；决定用 decision_record；零散知识用 note_save。",
-  "6. 核销：完成后 checklist_update status='done' 必须带 evidence（做了什么、在哪验证、链接/路径）。",
-  "7. 变更：做不了按原样完成就 status='changed' 并写清变更内容；被卡住 status='blocked' + block_reason。",
+  "6. 核销：完成后 checklist_update status='done' 必须带 evidence（做了什么、在哪验证、链接/路径）。证据要说清【做到什么程度】——只写「已对接」「在推进」「完成一半」会被判定为进度而不是完成，任务进入待核实。",
+  "6b. 进展：同一件事往前走了一步（见客户、发了材料、拿到反馈）用 checklist_progress 记在该任务上；不要用 checklist_add 新建「跟进××」这类过程性条目。",
+  "6c. 版本：需求变了导致原目标作废时用 checklist_supersede 升级为新版本，旧任务会自动关闭并注明被取代；关联事项用 parent_id 挂到上一级，别平铺。",
+  "7. 变更：做不了按原样完成就 status='changed' 并写清变更内容（新范围、对谁有影响）；被卡住 status='blocked' + block_reason。",
   "8. 收尾：收工前 checklist_verify 全量核对，把 gaps 补齐；file_register 登记产物位置；session_end 写总结。",
   "9. 提醒：工具返回值里 reminders_unread 有未读提醒，先处理 P0。",
   "10. 分拣：inbox.pending > 0 时，看 inbox.items，确认归属后 item_move 分拣；分不清就保持原样并在会话总结里说明。",

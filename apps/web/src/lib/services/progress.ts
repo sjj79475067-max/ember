@@ -23,6 +23,7 @@ export function projectDetail(idOrKey: string) {
     blocked: items.filter((i) => i.status === "blocked").length,
     changed: items.filter((i) => i.status === "changed").length,
     overdue: items.filter((i) => i.dueAt && i.dueAt < Date.now() / 1000 && !["done", "dropped"].includes(i.status)).length,
+    needsReview: items.filter((i) => i.needsReview === 1).length,
   };
   return { project: p, items, parked, groups: listGroups(p.id), meetings, decisions, files, policies, notes, events, progress };
 }

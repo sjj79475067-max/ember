@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 
 /** 写操作工具名（用于条例门禁：工具形式的门禁只拦截写操作） */
 export const WRITE_TOOLS = [
-  "checklist_add", "checklist_update", "claim_item", "release_item", "meeting_import",
+  "checklist_add", "checklist_update", "checklist_progress", "checklist_supersede", "claim_item", "release_item", "meeting_import",
   "ingest_history", "note_save", "decision_record", "file_register", "file_verify", "file_move",
   "item_move", "item_merge", "project_create", "project_groups", "reminder_ack", "policy_write", "policy_ack", "session_end",
 ];

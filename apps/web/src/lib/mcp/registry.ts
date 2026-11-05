@@ -2,7 +2,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import type { Ctx } from "@/lib/http/api";
 import { listProjects, getProject, createProject, updateProject, resolveProjectOrNull, getInbox } from "@/lib/services/projects";
-import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor, moveItem, mergeItems } from "@/lib/services/items";
+import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor, moveItem, mergeItems, addProgress, supersedeItem, findDuplicates } from "@/lib/services/items";
 import { moveFile } from "@/lib/services/files";
 import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
 import { createMeeting, getMeeting, listMeetings } from "@/lib/services/meetings";
@@ -144,6 +144,7 @@ export const tools: ToolDef[] = [
       due_before: iso.optional(),
       q: z.string().optional(),
       group: z.string().optional().describe("按分组名过滤"),
+      needs_review: z.boolean().optional().describe("只看已完成但证据像进度、需要核实的任务"),
       limit: z.number().int().min(1).max(200).optional(),
       cursor: z.number().int().optional(),
     }),
@@ -151,7 +152,7 @@ export const tools: ToolDef[] = [
       let projectId = i.project;
       if (projectId) projectId = getProject(projectId)?.id ?? "__missing__";
       if (projectId === "__missing__") throw Object.assign(new Error(`找不到项目「${i.project}」，请先 project_list 确认代号`), { status: 404 });
-      const res = listItems({ projectId, status: i.status as never, dueBefore: i.due_before, q: i.q, limit: i.limit, cursor: i.cursor });
+      const res = listItems({ projectId, status: i.status as never, dueBefore: i.due_before, q: i.q, limit: i.limit, cursor: i.cursor, needsReview: i.needs_review });
       const groups = new Map<string, string>();
       if (res.items.length) {
         const ws = db.select().from(s.workstreams).all();
@@ -163,6 +164,8 @@ export const tools: ToolDef[] = [
           id: it.id, title: it.title, status: it.status, priority: it.priority, due_at: it.dueAt,
           done_definition: it.doneDefinition, claimed_by: it.claimedBy || null, version: it.version,
           evidence: it.evidence || undefined, block_reason: it.blockReason || undefined,
+          progress_log: it.detailMd || undefined, needs_review: it.needsReview === 1 || undefined,
+          superseded_by: it.supersededBy || undefined,
           group: groups.get(it.workstreamId ?? "") ?? null,
         })),
         next_cursor: res.nextCursor,
@@ -172,7 +175,11 @@ export const tools: ToolDef[] = [
   {
     name: "checklist_add",
     title: "添加任务",
-    description: "批量添加任务（1-50 条）。每条写清 title（动词开头）、done_definition（可验收的完成标准）、due_at（如有）。不确定属于哪个项目时省略 project，任务会进「收件箱」待分拣，不会乱写进某个项目。返回里会回显写入的项目。",
+    description:
+      "批量添加【新的、可验收的事项】（1-50 条），不是记流水账。每条写清 title（动词开头、指向交付物）、done_definition（做到什么程度算完）、due_at（如有）。\n" +
+      "同一件事的后续进展不要新建任务：用 checklist_progress 追加，或用 checklist_update 改状态。\n" +
+      "如果它其实是原有事项的升级版（范围变了、标准变了），用 checklist_supersede。\n" +
+      "返回里 merged 表示被识别为已有事项的进展并合并进去了；hints 提醒缺完成标准的条目。",
     write: true,
     input: z.object({
       project: z.string().optional().describe("项目 id 或 key；省略则进收件箱"),
@@ -197,7 +204,12 @@ export const tools: ToolDef[] = [
       const hints = [`已写入项目：${p!.key}（${p!.name}）`];
       if (p!.isInbox) hints.push("这些任务在收件箱。确认归属后调用 item_move 分拣到具体项目。");
       else hints.push("建议随后调用 checklist_list 确认已落库。");
-      return envelope({ ids: res.ids, project: { id: p!.id, key: p!.key, name: p!.name }, progress: res.progress }, hints);
+      for (const m of res.merged) hints.push(`「${m.intoTitle}」的进展已合并（${m.reason}），没有新建任务。`);
+      hints.push(...res.hints.slice(0, 5));
+      // 顺带提示疑似重复，供 agent 自己核对
+      const dups = res.ids.flatMap((id) => findDuplicates(p!.id, db.select().from(s.items).where(eq(s.items.id, id)).get()?.title ?? "").filter((d) => d.item_id !== id).map((d) => ({ new_id: id, ...d })));
+      if (dups.length) hints.push(`疑似与已有任务重复：${dups.map((d) => `「${d.title}」(${d.item_id})`).join("、")}。确认是同一件事就用 item_merge 合并，是不同的事就忽略。`);
+      return envelope({ ids: res.ids, merged: res.merged, duplicates: dups.map((d) => ({ item_id: d.item_id, title: d.title })), project: { id: p!.id, key: p!.key, name: p!.name }, progress: res.progress }, hints);
     },
   },
   {
@@ -232,12 +244,57 @@ export const tools: ToolDef[] = [
           setItemGroup(i.item_id, i.group);
           res.item = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get()!;
         }
-        return envelope({ item: res.item, progress: res.progress });
+        const hints: string[] = [];
+        if (res.flag === "evidence_is_progress") {
+          hints.push("注意：这条 evidence 读起来是「进行到哪一步」，不是「做到了什么程度」。任务已标记完成但进入「待核实」（needs_review=1）。如果其实没做完，请改回 doing，并用 checklist_progress 记录进展。");
+        }
+        return envelope({ item: res.item, needs_review: res.item.needsReview === 1 || undefined, progress: res.progress }, hints);
       } catch (e) {
         const err = e as Error & { status?: number; current?: unknown };
         if (err.status === 409) return envelope({ conflict: true, current: err.current, message: err.message });
         throw e;
       }
+    },
+  },
+  {
+    name: "checklist_progress",
+    title: "记录进展（不新建任务）",
+    description:
+      "同一件事有了进展（完成了一部分、开了会、发了材料、有阶段性结论）时调用：把进展追加到该任务的进展记录里，任务仍保持未完成状态。\n" +
+      "这是记账，不是新建事项。只有真的多出一件独立、可验收的事时，才用 checklist_add。",
+    write: true,
+    input: z.object({ item_id: z.string(), note: z.string().describe("这一步做了什么、产出了什么、下一步是什么"), percent: z.number().int().min(0).max(100).optional().describe("可选：大约完成到百分之几") }),
+    handler: async (i, ctx) => {
+      const it = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get();
+      if (!it) throw Object.assign(new Error("任务不存在"), { status: 404 });
+      gate(ctx, it.projectId, "checklist_progress");
+      const r = addProgress(i.item_id, i.note, ctx.actor, { percent: i.percent });
+      return envelope({ item: { id: r.item.id, title: r.item.title, status: r.item.status, version: r.item.version, latest: r.item.detailMd.split("\n\n").slice(-1)[0] } }, ["进展已记录在原任务上。"]);
+    },
+  },
+  {
+    name: "checklist_supersede",
+    title: "版本更迭（需求变了，升级为新版）",
+    description:
+      "同一件事但范围/标准变了，需要重做或接着做新版时调用：旧任务标记完成并注明「被新版取代」，同时建一个新的待办任务挂上来源。\n" +
+      "与 checklist_progress 的区别：进展=原样继续；更迭=原目标作废、以新目标为准。别把两件事混在一起。",
+    write: true,
+    input: z.object({
+      item_id: z.string().describe("旧任务"),
+      title: z.string().describe("新版本任务标题"),
+      detail_md: z.string().optional().describe("新版本的要求、与旧版的差异"),
+      done_definition: z.string().optional(),
+      due_at: iso.optional(),
+      priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+      group: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const it = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get();
+      if (!it) throw Object.assign(new Error("任务不存在"), { status: 404 });
+      gate(ctx, it.projectId, "checklist_supersede");
+      const group = i.group ? ensureGroup(it.projectId, i.group) : null;
+      const r = supersedeItem(i.item_id, { title: i.title, detailMd: i.detail_md, doneDefinition: i.done_definition, dueAt: i.due_at ?? null, priority: i.priority, workstreamId: group?.id }, ctx.actor, ctx.ip);
+      return envelope({ old_item_id: r.old.id, item: r.next }, [`旧任务已关闭并标注被新版取代；请在新任务「${r.next.title}」上继续，不要回头改旧任务。`]);
     },
   },
   {
@@ -291,7 +348,12 @@ export const tools: ToolDef[] = [
       items: z.array(z.object({
         title: z.string(), detail_md: z.string().optional(), done_definition: z.string().optional(),
         due_at: iso.optional(), priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
-      })).optional().describe("如果 agent 自己已整理好事务，直接传，跳过 AI 抽取"),
+        group: z.string().optional(),
+        done: z.boolean().optional().describe("true=这条在会上已经办完，作为已完成事项归档（status_note 作证据），不进入待办；默认 false"),
+        status_note: z.string().optional().describe("已办事项的完成说明/结论，或待办事项的当前进展"),
+        supersedes: z.string().optional().describe("如果这条是某个已有未完成事项的新版本（范围/标准变了），填该事项的 item_id"),
+        expected_version: z.number().int().optional(),
+      })).optional().describe("如果 agent 自己已整理好事务，直接传，跳过 AI 抽取。只放新事项、未完成事项的最新版本、已办结论；不要把过程流水账逐条列进来。"),
       parse_with_ai: z.boolean().optional(),
     }),
     handler: async (i, ctx) => {
@@ -300,10 +362,14 @@ export const tools: ToolDef[] = [
       const r = await createMeeting({
         projectId: p!.id, title: i.title ?? "会议记录", heldAt: i.held_at, participants: i.participants,
         source: i.source ?? "agent", minutesMd: i.text, attachments: i.attachments,
-        items: i.items?.map((x: Record<string, unknown>) => ({ title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition, dueAt: x.due_at, priority: x.priority })) as never,
+        items: i.items?.map((x: Record<string, unknown>) => ({ title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition, dueAt: x.due_at, priority: x.priority, group: x.group, done: x.done, statusNote: x.status_note, supersedes: x.supersedes, expectedVersion: x.expected_version as never })) as never,
         parseWithAi: i.parse_with_ai,
       }, ctx.actor, ctx.ip);
-      return envelope({ meeting_id: r.meeting?.id, project: { key: p!.key, name: p!.name }, deduped: r.deduped, created_item_ids: r.createdItemIds, summary: r.meeting?.summaryMd });
+      return envelope({
+        meeting_id: r.meeting?.id, project: { key: p!.key, name: p!.name }, deduped: r.deduped,
+        created_item_ids: r.createdItemIds, progress_merged: r.progressNotes ?? [], done_archived: r.doneNotes ?? [],
+        summary: r.meeting?.summaryMd,
+      }, ["只应为「新的事项 / 未完成事项的新版本 / 已办结论」建立或更新记录；过程叙述留在会议全文里即可。"]);
     },
   },
   {

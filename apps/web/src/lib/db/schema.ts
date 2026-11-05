@@ -69,6 +69,8 @@ export const items = sqliteTable("items", {
   projectId: text().notNull(),
   workstreamId: text(),
   parkingLot: integer(),
+  needsReview: integer().notNull().default(0), // 1 = 已完成但证据与标题对不上，待核实
+  supersededBy: text().notNull().default(""), // 被哪个更新后的任务替代（版本更迭链）
   parentId: text(),
   title: text().notNull(),
   detailMd: text().notNull().default(""),

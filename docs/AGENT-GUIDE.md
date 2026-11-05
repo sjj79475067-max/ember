@@ -25,7 +25,8 @@
 4. `checklist_list(status=open)` —— 看真实进度，不凭记忆。
 5. `claim_item` —— 认领（冲突时先问用户）。
 6. 做事，期间：会议用 `meeting_import`；决定用 `decision_record`；知识用 `note_save`；产物用 `file_register`。
-7. `checklist_update(status=done, evidence=...)` —— 完成必须有证据。
+7. `checklist_update(status=done, evidence=...)` —— 完成必须有证据，且证据要说清「做到什么程度」，不能是「已对接/在推进」。
+   进展用 `checklist_progress` 记在原任务上；需求变了用 `checklist_supersede` 升级版本；都不要用 `checklist_add` 记流水账。
 8. `checklist_verify` —— 收工前看 gaps 并补齐。
 9. `session_end` —— 写总结、释放认领。
 

@@ -61,6 +61,11 @@ export function refreshReminders() {
       }
     }
   }
+  // 完成证据像进度：任务被标完成但证据没说清做到什么程度，提醒核实
+  const suspicious = db.select().from(s.items).where(eq(s.items.needsReview, 1)).all();
+  for (const it of suspicious) {
+    upsert({ kind: "review", severity: "P1", title: `完成证据待核实：${it.title}`, bodyMd: `证据：「${it.evidence.slice(0, 120)}」。读起来像进度而不是完成结果：确认已做完则补写验收结论；没做完请改回进行中并记录进展。`, projectId: it.projectId, targetId: it.id, dedupeKey: `needs-review:${it.id}:v${it.version}` });
+  }
   // 收件箱积压
   const inbox = db.select().from(s.projects).where(eq(s.projects.isInbox, 1)).get();
   if (inbox) {

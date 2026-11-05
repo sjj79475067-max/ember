@@ -79,6 +79,23 @@
 - **项目分组**：`project_groups` 设置分组，任务用 `group` 参数挂靠；界面按分组折叠，长清单不再糊成一坨。
 - **写权限**：token 的 `write` scope 在 MCP 与 REST 两条通道都强制校验。
 
+## 5.2 事项生命周期：进展 vs 新事项 vs 新版本
+
+中心的目标是「事事有着落」，不是流水账。同一件事的三类记录必须分开：
+
+| 场景 | 用什么 | 结果 |
+|---|---|---|
+| 事情往前走了一步（见客户、交材料、拿到反馈） | `checklist_progress(item_id, note, percent?)` | 进展追加到原任务 `detailMd` 并记事件，任务状态不变 |
+| 确实多出一件独立、可验收的事 | `checklist_add`（必须写 done_definition） | 新建任务 |
+| 需求/范围变了，原目标作废 | `checklist_supersede(item_id, title, ...)` | 旧任务关闭并 `supersededBy` 指向新任务，新任务建立 |
+
+自动防流水账：
+- `checklist_add` 的过程性标题（「跟进××」「继续推进」等）或与已有未完成任务高度相似（二元组重合 ≥60%）→ 合并为该任务进展（返回 `merged`）。
+- `checklist_add` 带 `expected_version` 且版本已变 → 视为同事项的新进展，合并而非新建。
+- `meeting_import` 的 items 支持 `done=true`（已办事项归档为已完成，`status_note` 作证据）、`status_note`（进展合并）、`supersedes`（版本更迭）。
+- 完成证据判据：`done` 但证据是「进行到哪一步」而非「做到了什么程度」→ 自动标 `needsReview=1`，产生待核实提醒，`checklist_verify` 列为 gap。
+- `checklist_verify` 额外检查：进行中无人认领、变更无说明、缺完成标准、疑似重复。
+
 ## 6. 提醒引擎
 
 - 触发：到期前 3 天（due）、逾期（overdue）、阻塞（blocked）、必读未确认（policy）、资料超 30 天未核验或缺失（stale_file）。
