@@ -5,7 +5,7 @@ import { listProjects, getProject, createProject, updateProject, resolveProjectO
 import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor, moveItem, mergeItems, addProgress, supersedeItem, findDuplicates } from "@/lib/services/items";
 import { moveFile } from "@/lib/services/files";
 import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
-import { createMeeting, getMeeting, listMeetings } from "@/lib/services/meetings";
+import { createMeeting, getMeeting, listMeetings, linkItemToMeeting, saveMeetingItemsSnapshot, previewMeetingItems } from "@/lib/services/meetings";
 import { ingest } from "@/lib/services/ingest";
 import { upsertNote, createDecision, listNotes, listDecisions } from "@/lib/services/notes";
 import { registerFile, verifyFile, listFiles } from "@/lib/services/files";
@@ -335,7 +335,9 @@ export const tools: ToolDef[] = [
     name: "meeting_import",
     title: "导入会议记录（自动建档 + 抽取事务）",
     description:
-      "把任何来源的会议记录（飞书/腾讯会议/录音转写/粘贴文本/AI 摘要）归档为会议档案，并自动整理出待办清单。可直接传 items 跳过 AI。返回会议 id 与生成的清单。",
+      "把任何来源的会议记录（飞书/腾讯会议/录音转写/粘贴文本/AI 摘要）归档为会议档案。\n" +
+      "默认【只归档、不生成任务】—— 用户大多只要清单本身，清单由人自己整理，或让用户明确说\"帮我把这条会议整理成清单\"时再做。\n" +
+      "需要落任务时传 items（你自己整理好的，或用户确认过的）；create_items=true 时才用内置规则自动抽一版草稿。",
     write: true,
     input: z.object({
       project: z.string(),
@@ -349,11 +351,14 @@ export const tools: ToolDef[] = [
         title: z.string(), detail_md: z.string().optional(), done_definition: z.string().optional(),
         due_at: iso.optional(), priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
         group: z.string().optional(),
-        done: z.boolean().optional().describe("true=这条在会上已经办完，作为已完成事项归档（status_note 作证据），不进入待办；默认 false"),
+        done: z.boolean().optional().describe("true=这条在会上已经办完，归档为已完成（status_note 作证据），不进入待办；默认 false"),
         status_note: z.string().optional().describe("已办事项的完成说明/结论，或待办事项的当前进展"),
         supersedes: z.string().optional().describe("如果这条是某个已有未完成事项的新版本（范围/标准变了），填该事项的 item_id"),
         expected_version: z.number().int().optional(),
-      })).optional().describe("如果 agent 自己已整理好事务，直接传，跳过 AI 抽取。只放新事项、未完成事项的最新版本、已办结论；不要把过程流水账逐条列进来。"),
+      })).optional().describe("用户确认要落成任务的条目。只放新事项、未完成事项的最新版本、已办结论；不要把过程流水账逐条列进来。"),
+      create_items: z.boolean().optional().describe("true=用内置规则自动抽一版草稿并落任务。只有用户明确要求自动生成清单时才传。"),
+      link_item_ids: z.array(z.string()).optional().describe("把已有的任务关联到这条会议（不改任务本身）"),
+      save_draft: z.boolean().optional().describe("true=把这条会议的清单草稿存成快照（仅当用户想留存清单时）"),
       parse_with_ai: z.boolean().optional(),
     }),
     handler: async (i, ctx) => {
@@ -364,12 +369,18 @@ export const tools: ToolDef[] = [
         source: i.source ?? "agent", minutesMd: i.text, attachments: i.attachments,
         items: i.items?.map((x: Record<string, unknown>) => ({ title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition, dueAt: x.due_at, priority: x.priority, group: x.group, done: x.done, statusNote: x.status_note, supersedes: x.supersedes, expectedVersion: x.expected_version as never })) as never,
         parseWithAi: i.parse_with_ai,
+        extractItems: i.create_items === true,
       }, ctx.actor, ctx.ip);
+      for (const iid of i.link_item_ids ?? []) linkItemToMeeting(iid, r.meeting!.id, ctx.actor);
+      if (i.save_draft) saveMeetingItemsSnapshot(r.meeting!.id, i.items ?? []);
       return envelope({
         meeting_id: r.meeting?.id, project: { key: p!.key, name: p!.name }, deduped: r.deduped,
         created_item_ids: r.createdItemIds, progress_merged: r.progressNotes ?? [], done_archived: r.doneNotes ?? [],
         summary: r.meeting?.summaryMd,
-      }, ["只应为「新的事项 / 未完成事项的新版本 / 已办结论」建立或更新记录；过程叙述留在会议全文里即可。"]);
+      }, [
+        "本工具默认只归档；用户没有明确要清单时，不要自己生成任务。",
+        "只应为「新的事项 / 未完成事项的新版本 / 已办结论」建立或更新记录；过程叙述留在会议全文里即可。",
+      ]);
     },
   },
   {
@@ -383,7 +394,7 @@ export const tools: ToolDef[] = [
       title: z.string().optional(),
       text: z.string(),
       source: z.string().optional(),
-      create_items: z.boolean().optional(),
+      create_items: z.boolean().optional().describe("true=同时从内容中抽取任务；默认只归档"),
     }),
     handler: async (i, ctx) => {
       const p = i.project ? resolveProjectOrNull(i.project) : getInbox();
@@ -614,6 +625,15 @@ export const tools: ToolDef[] = [
       const p = i.project ? resolveProjectOrNull(i.project) : null;
       return envelope({ meetings: listMeetings(p?.id, i.limit) });
     },
+  },
+  {
+    name: "meeting_draft_items",
+    title: "为会议整理一版清单草稿（不落库）",
+    description:
+      "用户在网页点了「整理清单」、或明确让你\"看看这条会议有哪些事要做\"时调用：按规则从会议原文抽出一版待办草稿，只返回给你看，不写任何任务。\n" +
+      "你审阅后可以改编，再调 checklist_add 落库（推荐，由你做判断），或让用户自己在网页上确认保存。",
+    input: z.object({ meeting_id: z.string() }),
+    handler: async (i) => envelope(await previewMeetingItems(i.meeting_id), ["草稿不会自动写入。确认后再用 checklist_add 落库，重复的用 checklist_add 前先 checklist_list 核对。"]),
   },
   {
     name: "meeting_get",

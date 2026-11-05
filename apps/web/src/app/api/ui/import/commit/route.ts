@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   if (!body.project_id) return Response.json({ ok: false, error: "缺少项目" }, { status: 400 });
   const r = await createMeeting({
     projectId: body.project_id, title: body.title, source: body.source, minutesMd: body.text,
-    summaryMd: body.summary, items: body.items,
+    summaryMd: body.summary, items: body.items, extractItems: false,
   }, { type: "user", name: user.name });
   return Response.json({ ok: true, meetingId: r.meeting?.id, createdCount: r.createdItemIds.length, deduped: r.deduped });
 }

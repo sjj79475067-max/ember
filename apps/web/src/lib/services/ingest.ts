@@ -38,12 +38,12 @@ export async function ingest(input: IngestInput, actor: Actor, ip = "") {
       const parsed = await extractMeeting(input.text, title);
       if (parsed) {
         summary = parsed.summary; title = parsed.title || title;
-        if (input.createItems !== false) items = parsed.items;
+        if (input.createItems === true) items = parsed.items;
       }
     }
   }
-  // 无 AI 或 AI 未产出时，用确定性规则抽取，保证归集后清单不为空
-  if (!items.length && input.createItems !== false) {
+  // 无 AI 或 AI 未产出时，用确定性规则抽取（仅在明确要求生成清单时）
+  if (!items.length && input.createItems === true) {
     const { extractDeterministic } = await import("@/lib/ai/rules");
     const d = extractDeterministic(input.text, Date.now());
     items = d.items;
@@ -53,7 +53,7 @@ export async function ingest(input: IngestInput, actor: Actor, ip = "") {
 
   const batchId = newId("imp");
   let itemIds: string[] = [];
-  if (input.createItems !== false && input.projectId && items.length) {
+  if (input.createItems === true && input.projectId && items.length) {
     const res = addItems(input.projectId, items.map((i) => ({ ...i, sourceType: "import" as const, sourceRef: `import:${batchId}` })), actor, ip);
     itemIds = res.ids;
   }
@@ -70,7 +70,7 @@ export async function ingest(input: IngestInput, actor: Actor, ip = "") {
       await createMeeting({
         projectId: input.projectId, title, heldAt: input.occurredAt ?? nowSec(),
         participants: input.participants ?? "", source: input.source ?? "import",
-        minutesMd: input.text, summaryMd: summary,
+        minutesMd: input.text, summaryMd: summary, extractItems: false,
       }, actor, ip);
     }
   }

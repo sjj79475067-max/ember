@@ -33,25 +33,42 @@ export type MeetingInput = {
 export function listMeetings(projectId?: string, limit = 50) {
   const q = db.select().from(s.meetings).orderBy(desc(s.meetings.heldAt)).limit(limit);
   const rows = projectId ? q.where(eq(s.meetings.projectId, projectId)).all() : q.all();
-  return rows;
+  return rows.filter((r) => !r.id.endsWith(":items"));
 }
 
 export function getMeeting(id: string) {
   const m = db.select().from(s.meetings).where(eq(s.meetings.id, id)).get();
   if (!m) return null;
-  const items = db.select().from(s.items).where(eq(s.items.sourceRef, `meeting:${id}`)).all();
+  // 关联事务 = 从这条会议衍生出来的 + 被指定挂到这条会议上的
+  const all = db.select().from(s.items).all();
+  const items = all.filter((i) => i.sourceRef === `meeting:${id}` || i.sourceRef.includes(`+link:${id}`));
   return { ...m, items };
+}
+
+/** 把已有任务挂到某条会议上（会议档案里显示它、但不改变任务本身） */
+export function linkItemToMeeting(itemId: string, meetingId: string, actor: Actor) {
+  const it = db.select().from(s.items).where(eq(s.items.id, itemId)).get();
+  if (!it) throw Object.assign(new Error("任务不存在"), { status: 404 });
+  const m = db.select().from(s.meetings).where(eq(s.meetings.id, meetingId)).get();
+  if (!m) throw Object.assign(new Error("会议不存在"), { status: 404 });
+  // 保留原来源（来自别的会议/导入的），用补充标记追加关联，避免覆盖溯源
+  if (!it.sourceRef.includes(`+link:${meetingId}`)) {
+    db.update(s.items).set({ sourceRef: `${it.sourceRef || ""}+link:${meetingId}` }).where(eq(s.items.id, itemId)).run();
+  }
+  db.insert(s.itemEvents).values({ id: newId("evt"), itemId, actorType: actor.type, actorName: actor.name, action: "update", note: `关联到会议：${m.title}`, createdAt: nowSec() }).run();
+  audit(actor, "meeting.link_item", "meeting", meetingId, { itemId });
+  return { ok: true };
 }
 
 export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") {
   const fp = createFingerprint(input.minutesMd, input.projectId);
   const exists = db.select().from(s.meetings).where(eq(s.meetings.id, `fp_${fp}`)).get();
-  if (exists) return { meeting: getMeeting(exists.id), deduped: true, createdItemIds: [] as string[] };
+  if (exists) return { meeting: getMeeting(exists.id), deduped: true, createdItemIds: [] as string[], progressNotes: [] as string[], doneNotes: [] as string[] };
 
   let summary = input.summaryMd ?? "";
   let items = input.items ?? [];
 
-  if ((input.parseWithAi || (!input.items?.length && input.extractItems !== false)) && input.minutesMd.trim()) {
+  if ((input.parseWithAi || (input.extractItems === true && !input.items?.length)) && input.minutesMd.trim()) {
     const { extractMeeting, isAiReady } = await import("@/lib/ai/extract");
     if (await isAiReady()) {
       const parsed = await extractMeeting(input.minutesMd, input.title);
@@ -61,8 +78,8 @@ export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") 
       }
     }
   }
-  if (!items.length && !input.items?.length) {
-    // 无 AI 或 AI 未产出：使用确定性规则抽取，保证导入后清单不为空
+  if (!items.length && !input.items?.length && input.extractItems === true) {
+    // 用户明确要清单时才用确定性规则抽
     const { extractDeterministic } = await import("@/lib/ai/rules");
     const d = extractDeterministic(input.minutesMd, Date.now());
     if (!summary) summary = d.summary;
@@ -86,7 +103,6 @@ export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") 
     const pending = items.filter((i) => !i.done);
     const finished = items.filter((i) => i.done);
     if (pending.length) {
-      // 更迭：先处理「这是某已有事项的新版本」
       const toAdd: typeof pending = [];
       for (const it of pending) {
         if (it.supersedes) {
@@ -107,7 +123,6 @@ export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") 
         for (const m of res.merged) progressNotes.push(`「${m.intoTitle}」的进展已合并，未新建`);
       }
     }
-    // 已办事项：能对上已有任务的就记进展或核销，对不上就归档为已完成
     for (const it of finished) {
       const { findDuplicates } = await import("./items");
       const cand = findDuplicates(input.projectId, it.title)[0];
@@ -129,6 +144,32 @@ export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") 
     }
   }
   return { meeting: getMeeting(id), deduped: false, createdItemIds, progressNotes, doneNotes };
+}
+
+/**
+ * 会议「整理清单」：按规则对原文抽一版草稿（不落库），供网页审阅后保存，或交给 agent 处理。
+ * 只在用户点了「整理」或 agent 主动调用时才跑，导入本身不触发任何抽取。
+ */
+export async function previewMeetingItems(meetingId: string) {
+  const m = db.select().from(s.meetings).where(eq(s.meetings.id, meetingId)).get();
+  if (!m) throw Object.assign(new Error("会议不存在"), { status: 404 });
+  const { extractDeterministic } = await import("@/lib/ai/rules");
+  const d = extractDeterministic(m.minutesMd, Date.now());
+  return { title: m.title, items: d.items };
+}
+
+/** 会议清单快照：保存「这条会议确认下来的清单」，便于下次查看（不是任务本体） */
+export function saveMeetingItemsSnapshot(meetingId: string, items: unknown[]) {
+  const pid = db.select().from(s.meetings).where(eq(s.meetings.id, meetingId)).get()?.projectId ?? "none";
+  db.insert(s.meetings).values({
+    id: meetingId + ":items", projectId: pid, title: "清单快照", heldAt: nowSec(), minutesMd: "", summaryMd: "",
+    attachments: JSON.stringify(items), createdAt: nowSec(), updatedAt: nowSec(),
+  }).onConflictDoUpdate({ target: s.meetings.id, set: { attachments: JSON.stringify(items), updatedAt: nowSec() } }).run();
+}
+
+export function loadMeetingItemsSnapshot(meetingId: string) {
+  const r = db.select().from(s.meetings).where(eq(s.meetings.id, meetingId + ":items")).get();
+  return r ? JSON.parse(r.attachments || "[]") : null;
 }
 
 export function updateMeeting(id: string, patch: Partial<MeetingInput>, actor: Actor) {

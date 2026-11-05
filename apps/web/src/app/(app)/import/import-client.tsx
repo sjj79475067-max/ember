@@ -80,7 +80,7 @@ export function ImportClient({ projects, initialProject }: { projects: P[]; init
       const data = await res.json();
       if (!data.ok) throw new Error(data.error ?? "保存失败");
       setResult({ meetingId: data.meetingId, createdCount: data.createdCount });
-      toast.success(`已归档，生成 ${data.createdCount} 条任务`);
+      toast.success(data.createdCount ? `已归档，生成 ${data.createdCount} 条任务` : "已归档（未生成任务）");
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
     setBusy(false);
@@ -91,7 +91,7 @@ export function ImportClient({ projects, initialProject }: { projects: P[]; init
       <div className="mx-auto flex max-w-xl flex-col items-center justify-center p-8 pt-24 text-center">
         <div className="mb-4 grid size-14 place-items-center rounded-full bg-[var(--color-ok)]/15 text-[var(--color-ok)]"><Check className="size-7" /></div>
         <h1 className="text-xl font-semibold">已归档</h1>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">会议档案已建立，提取出 {result.createdCount} 条待办事务。Agent 下次连接时会看到这些任务与提醒。</p>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">{result.createdCount ? `同时生成了 ${result.createdCount} 条待办事务，agent 下次连接会看到。` : "原文已归档。需要清单时可以在这条会议里自己整理，或让 agent 读完帮你整理。"}</p>
         <div className="mt-5 flex gap-2">
           {result.meetingId && <Button onClick={() => router.push(`/meetings/${result.meetingId}`)}>查看会议档案</Button>}
           <Button variant="outline" onClick={() => { setResult(null); setPreview(null); setText(""); setTitle(""); }}>继续导入</Button>
@@ -138,9 +138,11 @@ export function ImportClient({ projects, initialProject }: { projects: P[]; init
         <p className="mt-1 text-[11px] text-[var(--color-muted)]">支持 md / txt / docx / pdf 自动提取文本；截图作为附件参考。文件较大时建议在电脑端用 agent 通过 MCP 的 meeting_import 直接传入。</p>
       </div>
 
-      <div className="mt-4 flex justify-end gap-2">
-        <Button onClick={doPreview} disabled={busy}>{busy ? "整理中…" : <><Sparkles /> 智能整理预览</>}</Button>
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <Button variant="outline" onClick={() => commit()} disabled={busy}>{busy ? "保存中…" : <><FileText /> 只归档，不生成任务</>}</Button>
+        <Button onClick={doPreview} disabled={busy}>{busy ? "整理中…" : <><Sparkles /> 整理出清单（可选）</>}</Button>
       </div>
+      <p className="mt-1 text-right text-[11px] text-[var(--color-muted)]">大多数会议只需要归档。清单可以之后在这条会议页自己整理，或让 agent 读完后帮你整理。</p>
 
       {preview && (
         <Card className="mt-5">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getMeeting } from "@/lib/services/meetings";
+import { getMeeting, loadMeetingItemsSnapshot } from "@/lib/services/meetings";
+import { MeetingItemsClient } from "./meeting-items-client";
 import { db, s } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
@@ -53,19 +54,24 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
           )}
         </div>
         <div className="lg:col-span-2">
-          <h2 className="mb-2 text-sm font-semibold text-[var(--color-muted)]">衍生事务（{m.items.length}）</h2>
-          <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-card)]">
-            {m.items.length === 0 && <p className="p-4 text-sm text-[var(--color-muted)]">未生成任务。</p>}
-            {m.items.map((it) => (
-              <div key={it.id} className="border-b border-[var(--color-line)] p-3 last:border-0">
-                <p className={`text-[13px] ${it.status === "done" ? "text-[var(--color-muted)] line-through" : ""}`}>{it.title}</p>
-                <div className="mt-1 flex gap-1.5">
-                  <Badge tone={it.status === "done" ? "ok" : it.status === "blocked" ? "danger" : it.status === "changed" ? "warn" : "default"}>{STATUS_LABEL[it.status]}</Badge>
-                  {it.dueAt && <Badge>{fmtDate(it.dueAt)}</Badge>}
-                </div>
+          <MeetingItemsClient meetingId={m.id} initial={(loadMeetingItemsSnapshot(m.id) ?? m.items.map((it) => ({ title: it.title, done_definition: it.doneDefinition, done: it.status === "done", priority: it.priority }))) as never} />
+          {m.items.length > 0 && (
+            <div className="mt-3">
+              <h2 className="mb-2 text-sm font-semibold text-[var(--color-muted)]">已生成 / 关联的事务（{m.items.length}）</h2>
+              <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-card)]">
+                {m.items.map((it) => (
+                  <div key={it.id} className="border-b border-[var(--color-line)] p-3 last:border-0">
+                    <p className={`text-[13px] ${it.status === "done" ? "text-[var(--color-muted)] line-through" : ""}`}>{it.title}</p>
+                    <div className="mt-1 flex gap-1.5">
+                      <Badge tone={it.status === "done" ? "ok" : it.status === "blocked" ? "danger" : it.status === "changed" ? "warn" : "default"}>{STATUS_LABEL[it.status]}</Badge>
+                      {it.dueAt && <Badge>{fmtDate(it.dueAt)}</Badge>}
+                      <Link href={`/p/${m.projectId}`} className="text-[11px] text-[var(--color-brand)] hover:underline">在项目里查看</Link>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
