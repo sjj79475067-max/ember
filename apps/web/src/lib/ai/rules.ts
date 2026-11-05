@@ -107,7 +107,37 @@ function parseDue(text: string, nowMs: number): number | null {
     if (+d < nowMs) d = new Date(nowY + 1, Number(md[1]) - 1, Number(md[2]), 18, 0, 0);
     return Math.floor(+d / 1000);
   }
-  const rel = text.match(/(今天|明天|后天|本周|下周|月底|下月)/);
+  const weekDay = text.match(/(本|下|这)?周([一二三四五六日天])/) ?? text.match(/(周|星期|礼拜)([一二三四五六日天])/);
+  if (weekDay) {
+    const base = new Date(nowMs);
+    const map: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+    const target = map[weekDay[2]];
+    let delta = (target - base.getDay() + 7) % 7;
+    if (weekDay[1] === "下") delta += 7;
+    if (weekDay[0].startsWith("周末") || weekDay[2] === "末") delta = ((6 - base.getDay() + 7) % 7) || 6;
+    const d = new Date(nowMs + delta * 86400000);
+    d.setHours(18, 0, 0, 0);
+    return Math.floor(+d / 1000);
+  }
+  const inDays = text.match(/(\d+)\s*(?:天|日)(?:内|后|之内)/);
+  if (inDays) return Math.floor(nowMs / 1000) + Number(inDays[1]) * 86400;
+  const inWeeks = text.match(/(\d+)\s*(?:周|星期)(?:内|后)/);
+  if (inWeeks) return Math.floor(nowMs / 1000) + Number(inWeeks[1]) * 7 * 86400;
+  if (/下(一)?个?月/.test(text)) {
+    const d = new Date(nowMs);
+    d.setMonth(d.getMonth() + 1, 15);
+    d.setHours(18, 0, 0, 0);
+    return Math.floor(+d / 1000);
+  }
+  const inMonths = text.match(/(\d+)\s*个?月(?:内|后)/);
+  if (inMonths) {
+    const d = new Date(nowMs);
+    d.setMonth(d.getMonth() + Number(inMonths[1]));
+    d.setHours(18, 0, 0, 0);
+    return Math.floor(+d / 1000);
+  }
+  if (/年底/.test(text)) return Math.floor(new Date(new Date(nowMs).getFullYear(), 11, 31, 18).getTime() / 1000);
+  const rel = text.match(/(今天|明天|后天|本周|下周|月底|下月|季度末)/);
   if (rel) {
     const base = new Date(nowMs);
     if (rel[1] === "今天") return Math.floor(nowMs / 1000) + 86400;
@@ -125,7 +155,11 @@ function stripDue(text: string, _nowMs: number): string {
   return text
     .replace(/\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?/g, "")
     .replace(/\d{1,2}月\d{1,2}[日号]/g, "")
-    .replace(/(今天|明天|后天|本周[一二三四五六日天]?|下周[一二三四五六日天]?|月底前?|下月)/g, "")
+    .replace(/(本|下|这)?周[一二三四五六日天]/g, "")
+    .replace(/\d+\s*(?:天|日|周|星期|个?月)(?:内|后|之内)/g, "")
+    .replace(/年底前?/g, "")
+    .replace(/下(一)?个?月(?:内|底)?/g, "")
+    .replace(/(今天|明天|后天|本周|下周|月底前?|下月|季度末)/g, "")
     .replace(/[（(]\s*[)）]/g, "")
     .trim();
 }

@@ -44,3 +44,15 @@ describe("extractDeterministic", () => {
     expect(() => extractDeterministic("", Date.now())).not.toThrow();
   });
 });
+
+describe("日期与标题过滤补充", () => {
+  it("本周五 / 3 日内 / 下个月 都能解析，且不残留在标题里", () => {
+    const now = new Date("2025-11-03T10:00:00").getTime(); // 周一
+    const r = extractDeterministic("- 输出压测报告，本周五之前\n- 提交合同，3 日内\n- 完成年报，下个月", now);
+    expect(r.items.length).toBe(3);
+    for (const it of r.items) {
+      expect(it.dueAt).toBeTruthy();
+      expect(it.title).not.toMatch(/本周|日内|下个月/);
+    }
+  });
+});

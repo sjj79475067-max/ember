@@ -32,3 +32,12 @@ docker compose down && tar xzf ember-2026-11-05.tgz -C /path/to/volume && docker
 - `GET /api/health`：db 状态与计数。
 - 日志：`docker compose logs -f web`。
 - Agent 连不上：先看 `/connect` 页的「测试连接」，再确认 Token 未吊销、URL 含 `/api/mcp`。
+
+## Docker 部署验证记录（2026-11-05）
+
+- 镜像 `ember:latest` 约 499MB（linux/arm64），容器空闲内存约 60MiB。
+- `docker compose up -d --build` 后 `/api/health` 返回 `db:up`，全链路冒烟与 MCP 冒烟通过。
+- 备份：`./scripts/backup.sh` → `backups/ember-<时间>.tgz`；恢复：`./scripts/restore.sh <包>`。
+  恢复会停止服务 → 覆盖数据卷 → 修正属主（1001）→ 重启；演练验证：恢复前新建的标记项目在恢复后消失，且写入正常。
+- 注意：数据卷中 SQLite 文件属主必须是容器用户 `nextjs(1001)`，否则出现 `SQLITE_READONLY`（镜像已预建 `/app/data` 并授权，恢复脚本会自动 chown）。
+- Docker Desktop 若拉镜像超时，检查设置里的手动代理是否指向本机可用端口（本机为 `127.0.0.1:7890`）。

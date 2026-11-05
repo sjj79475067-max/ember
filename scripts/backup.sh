@@ -5,9 +5,10 @@ OUT=${1:-"./backups"}
 mkdir -p "$OUT"
 STAMP=$(date +%Y%m%d-%H%M%S)
 cd "$(dirname "$0")/.."
-if docker compose ps --format '{{.Name}}' 2>/dev/null | grep -q ember; then
-  docker run --rm -v ember_ember-data:/data -v "$PWD/$OUT":/out alpine \
-    sh -c "tar czf /out/ember-$STAMP.tgz -C /data ."
+if docker compose ps 2>/dev/null | grep -q ember-web; then
+  docker cp ember-web-1:/app/data/. "$OUT/tmp-$STAMP" >/dev/null 2>&1 || { mkdir -p "$OUT/tmp-$STAMP"; docker run --rm -v ember_ember-data:/data -v "$PWD/$OUT/tmp-$STAMP":/out alpine sh -c "cp -a /data/. /out/" ; }
+  tar czf "$OUT/ember-$STAMP.tgz" -C "$OUT/tmp-$STAMP" .
+  rm -rf "$OUT/tmp-$STAMP"
   echo "已备份到 $OUT/ember-$STAMP.tgz"
 else
   tar czf "$OUT/ember-$STAMP.tgz" -C apps/web data

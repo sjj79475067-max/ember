@@ -1,12 +1,15 @@
-import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 
-const file = (process.env.DATABASE_URL ?? "file:./data/ember.db").replace(/^file:/, "");
+const { createRequire } = await import("node:module");
+const appDir = process.env.APP_DIR ?? process.cwd();
+const Database = createRequire(appDir + "/package.json")("better-sqlite3");
+
+const file = (process.env.DATABASE_URL ?? "file:" + path.join(appDir, "data/ember.db")).replace(/^file:/, "");
 fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
 const db = new Database(file);
 db.pragma("journal_mode = WAL");
-const dir = path.resolve("drizzle");
+const dir = path.resolve(process.env.MIGRATIONS_DIR ?? path.join(appDir, "drizzle"));
 db.exec("create table if not exists __migrations (tag text primary key, applied_at integer)");
 const tags = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
 let applied = 0;

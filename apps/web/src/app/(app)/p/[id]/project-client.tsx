@@ -163,6 +163,7 @@ function Checklist({ items, projectId, filter, setFilter, onChange }: { items: I
                   {it.dueAt && <Badge tone={d! < 0 ? "danger" : d! <= 2 ? "warn" : "default"}><Calendar className="size-3" />{fmtDate(it.dueAt)}{d! < 0 ? ` 逾期${-d!}天` : ""}</Badge>}
                   {it.claimedBy && <Badge tone="brand">认领中</Badge>}
                   {it.sourceType === "meeting" && <Badge>来自会议</Badge>}
+                  {it.detailMd && <span className="text-[11px] text-[var(--color-muted)]">{it.detailMd}</span>}
                 </div>
               </div>
               <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
