@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# 全链路冒烟：初始化 → 登录 → 建项目 → 导入会议 → 生成清单 → agent 认领/核销 → 提醒
+# 全链路冒烟：登录 → 建项目 → 导入会议 → 生成清单 → agent 认领/核销 → 提醒
+# 要求目标实例已初始化，且设置了 ADMIN_EMAIL / ADMIN_PASS 指向一个已存在的账号。
+# 注意：冒烟会创建测试项目与 token，正式实例请用单独的测试实例或事后清理。
 set -euo pipefail
 BASE=${1:-http://localhost:3000}
 TOKEN_FILE=${2:-"/tmp/ember-smoke-token"}
 EMAIL="smoke$$@example.com"
-ADMIN_EMAIL=${ADMIN_EMAIL:-me@example.com}
-ADMIN_PASS=${ADMIN_PASS:-ember12345}
+ADMIN_EMAIL=${ADMIN_EMAIL:-smoke-bot@ember.local}
+ADMIN_PASS=${ADMIN_PASS:-smoke-pass-12345}
 
 jq_() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 
-echo "== 1. 初始化（若已初始化则跳过）"
+echo "== 1. 初始化（不占用管理员：用冒烟账号登录，不落地任何演示数据）"
 INIT=$(curl -s "$BASE/api/auth/setup")
 if [ "$(echo "$INIT" | jq_ 'd["initialized"]')" = "False" ]; then
-  curl -s -X POST "$BASE/api/auth/setup" -H 'content-type: application/json' \
-    -d "{\"email\":\"$ADMIN_EMAIL\",\"name\":\"冒烟\",\"password\":\"$ADMIN_PASS\"}" > /dev/null
-  echo "  已创建管理员 $ADMIN_EMAIL"
-else
-  echo "  已初始化，跳过"
+  echo "  该实例还没有管理员，请在浏览器里自行创建；冒烟测试跳过。"
+  exit 0
 fi
+echo "  已初始化，使用冒烟账号登录"
 
 echo "== 2. 管理员登录"
 SESSION=$(mktemp)

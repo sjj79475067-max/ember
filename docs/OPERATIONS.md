@@ -54,3 +54,23 @@ docker compose down && tar xzf ember-2026-11-05.tgz -C /path/to/volume && docker
    0 8 * * * curl -s -X POST "http://localhost:3000/api/scheduled/brief?key=$CRON_KEY" >/dev/null
    ```
    `CRON_KEY` 在 `.env` 中，容器启动时注入；未设置则该入口直接 401。
+
+## 忘记密码 / 重置管理员
+
+没有"初始密码"——第一次打开网页时由你自己创建管理员。忘记密码时在服务器上执行：
+
+```bash
+# Docker
+docker compose exec web node apps/web/scripts/reset-password.mjs '新密码至少8位'
+# 本机模式
+cd apps/web && node scripts/reset-password.mjs '新密码至少8位'
+
+# 指定某个账号
+docker compose exec web node apps/web/scripts/reset-password.mjs '新密码' someone@example.com
+```
+
+脚本直接改数据库里的密码哈希，并注销该账号所有已登录会话；不需要旧密码。执行后再登录，进去可在设置里改邮箱。
+
+## 安全提醒
+
+冒烟脚本（`scripts/smoke.sh`）会在目标实例上创建测试项目、token 和账号，**只能对测试实例跑**，不要对正式实例跑；正式实例请用 `ADMIN_EMAIL` / `ADMIN_PASS` 指向一个专用测试账号，并事后在「接入 Agent」页吊销测试 token。
