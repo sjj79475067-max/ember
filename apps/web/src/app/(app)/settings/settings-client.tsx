@@ -1,4 +1,5 @@
 "use client";
+import { CaptureSettings } from "./capture-settings";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, Plus, Check, Trash2, Activity, Download } from "lucide-react";
@@ -22,7 +23,7 @@ const PRESETS = [
   { label: "Claude 直连", kind: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5-5" },
 ];
 
-export function SettingsClient({ providers, usage, sessions, user }: { providers: Provider[]; usage: { calls: number; input: number; output: number }; sessions: Session[]; user: { name: string; email: string } }) {
+export function SettingsClient({ providers, usage, sessions, user, base }: { providers: Provider[]; usage: { calls: number; input: number; output: number }; sessions: Session[]; user: { name: string; email: string }; base: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ id: "", label: "", kind: "openai_compat", baseUrl: "", model: "", api_key: "" });
@@ -83,6 +84,8 @@ export function SettingsClient({ providers, usage, sessions, user }: { providers
           <p className="mt-2 text-[11px] text-[var(--color-muted)]">用量：{usage.calls} 次调用 · 输入 {usage.input.toLocaleString()} / 输出 {usage.output.toLocaleString()} tokens</p>
         </CardContent></Card>
       </section>
+
+      <CaptureSettings base={base} />
 
       <section className="mt-6">
         <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Activity className="size-4" /> Agent 会话</h2>

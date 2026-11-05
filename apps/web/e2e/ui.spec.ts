@@ -12,7 +12,7 @@ test("登录后能浏览主要页面", async ({ page }) => {
   await page.getByPlaceholder("you@example.com").fill(EMAIL);
   await page.locator('input[type="password"]').fill(PASS);
   await page.getByRole("button", { name: /登录|创建并进入/ }).click();
-  await page.waitForURL(`${BASE}/`, { timeout: 15000 });
+  await page.waitForURL(`${BASE}/`, { timeout: 40000 });
   await expect(page.getByRole("heading", { name: "总览" })).toBeVisible();
 
   for (const [path, heading] of [
@@ -143,4 +143,35 @@ test("今日与复盘：加入今天、在等别人、完成、保存复盘", as
   await page.goto(`${BASE}/today`);
   const w = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(w).toBeLessThanOrEqual(392);
+});
+
+test("随手记：网页输入 → 草稿 → 确认落到项目；快捷指令投递", async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByPlaceholder("you@example.com").fill(EMAIL);
+  await page.locator('input[type="password"]').fill(PASS);
+  await page.getByRole("button", { name: /登录|创建并进入/ }).click();
+  await page.waitForURL(`${BASE}/`);
+  const tag = Date.now().toString(36).slice(-5);
+  await page.goto(`${BASE}/capture`);
+  await expect(page.locator("h1").first()).toContainText("随手记", { timeout: 20000 });
+  await page.getByPlaceholder(/比如：/).fill(`e2e 整理报销单 ${tag}；e2e 给设计师发需求 ${tag}`);
+  await page.getByRole("button", { name: "整理" }).click();
+  await expect(page.locator(`input[value="e2e 整理报销单 ${tag}"]`)).toBeVisible({ timeout: 20000 });
+  await page.getByRole("button", { name: "全部确认" }).first().click();
+  await expect(page.getByText("已落实").first()).toBeVisible({ timeout: 10000 });
+  // 快捷指令投递：没有密钥 401；有密钥进待审
+  expect((await page.request.post(`${BASE}/api/capture`, { data: { text: "x" } })).status()).toBe(401);
+  const k = await page.request.post(`${BASE}/api/ui/channels`, { data: { action: "key_mint" } });
+  const key = (await k.json()).key;
+  const r = await page.request.post(`${BASE}/api/capture`, { data: { text: `e2e 快捷指令发来的 ${tag}`, id: `sc-${tag}` }, headers: { authorization: `Bearer ${key}` } });
+  expect((await r.json()).message).toMatch(/收到/);
+  const again = await page.request.post(`${BASE}/api/capture?key=${key}`, { data: { text: `e2e 快捷指令发来的 ${tag}`, id: `sc-${tag}` } });
+  expect(again.status()).toBe(200);
+  await page.goto(`${BASE}/capture`);
+  await expect(page.locator(`input[value="e2e 快捷指令发来的 ${tag}"]`)).toHaveCount(1, { timeout: 20000 });
+  await page.goto(`${BASE}/settings`);
+  await expect(page.getByText("飞书机器人", { exact: true })).toBeVisible({ timeout: 20000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/capture`);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(392);
 });

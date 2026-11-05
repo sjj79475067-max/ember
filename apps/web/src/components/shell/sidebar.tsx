@@ -2,13 +2,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen, Newspaper, Layers, Briefcase, Sun, Target } from "lucide-react";
+import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen, Newspaper, Layers, Briefcase, Sun, Target, PenLine } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 
 const NAV = [
   { href: "/today", label: "今日", icon: Sun },
+  { href: "/capture", label: "随手记", icon: PenLine },
   { href: "/", label: "总览", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/affairs", label: "事务", icon: Briefcase },
@@ -27,7 +28,7 @@ const NAV2 = [
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
-export function Sidebar({ user, unread }: { user: { name: string; email: string }; unread: number }) {
+export function Sidebar({ user, unread, captures = 0 }: { user: { name: string; email: string }; unread: number; captures?: number }) {
   const path = usePathname();
   const router = useRouter();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -39,7 +40,7 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
 
   return (
     <>
-      <MobileNav path={path} unread={unread} onSearch={() => setPaletteOpen(true)} />
+      <MobileNav path={path} unread={unread} captures={captures} onSearch={() => setPaletteOpen(true)} />
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-card)]/60 px-3 py-4 md:flex">
         <Link href="/" className="mb-4 flex items-center gap-2 px-2">
           <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-brand)] text-sm font-bold text-white">淬</span>
@@ -58,6 +59,7 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
               <Link key={n.href} href={n.href} className={cn("flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors", active ? "bg-[var(--color-brand-soft)] font-medium text-[var(--color-brand)]" : "text-[var(--color-fg)]/80 hover:bg-[var(--color-line)]/40")}>
                 <n.icon className="size-4" /> {n.label}
                 {n.href === "/inbox" && unread > 0 && <span className="ml-auto rounded-full bg-[var(--color-danger)] px-1.5 text-[10px] font-semibold leading-4 text-white">{unread}</span>}
+                {n.href === "/capture" && captures > 0 && <span className="ml-auto rounded-full bg-[var(--color-brand)] px-1.5 text-[10px] font-semibold leading-4 text-white">{captures}</span>}
               </Link>
             );
           })}
@@ -88,10 +90,10 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
   );
 }
 
-function MobileNav({ path, unread, onSearch }: { path: string; unread: number; onSearch: () => void }) {
+function MobileNav({ path, unread, captures, onSearch }: { path: string; unread: number; captures: number; onSearch: () => void }) {
   const ITEMS = [
     { href: "/today", label: "今日", icon: Sun },
-    { href: "/", label: "总览", icon: LayoutDashboard },
+    { href: "/capture", label: "随手记", icon: PenLine },
     { href: "/projects", label: "项目", icon: FolderKanban },
     { href: "/affairs", label: "事务", icon: Briefcase },
     { href: "/inbox", label: "提醒", icon: Bell },
@@ -115,6 +117,7 @@ function MobileNav({ path, unread, onSearch }: { path: string; unread: number; o
               <n.icon className="size-[18px]" />
               {n.label}
               {n.href === "/inbox" && unread > 0 && <span className="absolute right-[22%] top-1.5 size-1.5 rounded-full bg-[var(--color-danger)]" />}
+              {n.href === "/capture" && captures > 0 && <span className="absolute right-[22%] top-1.5 size-1.5 rounded-full bg-[var(--color-brand)]" />}
             </Link>
           );
         })}

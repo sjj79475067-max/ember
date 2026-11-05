@@ -161,6 +161,8 @@ export function decisionsQueue(): Decision[] {
     if (!["won", "lost"].includes(d.stage) && !d.nextStep.trim() && t - d.updatedAt > 3 * DAY)
       out.push({ kind: "deal", label: "合作没有下一步", title: d.title, detail: "写清下一步做什么、什么时候", href: "/affairs?tab=deals", targetType: "deal", targetId: d.id });
   }
+  const caps = db.select().from(s.captureDrafts).where(eq(s.captureDrafts.status, "pending")).all();
+  if (caps.length) out.unshift({ kind: "capture", label: "随手记待确认", title: `${caps.length} 条草稿`, detail: caps.slice(0, 3).map((c) => c.title).join("；"), href: "/capture", targetType: "capture", targetId: "all" });
   const seen = new Set<string>();
   return out.filter((d) => (seen.has(d.targetType + d.targetId) ? false : (seen.add(d.targetType + d.targetId), true)));
 }

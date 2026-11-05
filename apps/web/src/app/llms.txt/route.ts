@@ -47,6 +47,7 @@ export async function GET(req: NextRequest) {
     "- 公司事务：台账 `asset_save`（备案号/账号/域名/证书/合同/设备，按到期分档提醒；**不存密码**，`secret_ref` 只写保存位置）、采购 `purchase_save`、合作 `deal_save`（必须有下一步）、行程 `trip_save`；这些对象下的待办用 `checklist_add(owner_type, owner_id)`。",
     "- 固定节点：`template_apply(template=company_cn)` 预置报税、汇算清缴、工商年报、社保、发票整理等重复事项，完成一期自动生成下一期。",
     "- 秘书：开工先调 `today`（今天做什么 / 要用户拍板的 / 在等谁 / 7 天内到期 / 拖着没动 / 本周三件事）；交给别人或等外部审核时 `checklist_update(waiting_for)`，自动 3 天后提醒去催；`weekly_review` 取复盘素材或起草本周三件事（草稿，用户确认）。",
+    "- 随手记：用户在手机（飞书/快捷指令）发的话会整理成草稿，**只有用户能确认**；agent 不处理草稿，`today` 的 decisions 里能看到待确认数量。",
     "- 日程：`calendar_agenda(from,to)` 汇总所有带日期的事；用户可在网页生成 ICS 链接订阅到手机日历。",
     "",
     "## 工具一览",

@@ -527,3 +527,45 @@ export const weeklyReviews = sqliteTable("weekly_reviews", {
   createdAt: now(),
   updatedAt: now(),
 });
+
+// ---------- 随手记：手机/飞书/快捷指令发来的原始消息，以及整理出的待审草稿 ----------
+export const captures = sqliteTable("captures", {
+  id: text().primaryKey(),
+  channel: text().notNull(), // feishu | http | web | …（渠道适配器 id）
+  externalId: text().notNull(), // 渠道侧消息 id，幂等去重
+  sender: text().notNull().default(""),
+  chatRef: text().notNull().default(""), // 回复到哪个会话
+  kind: text().notNull().default("text"), // text | audio
+  rawText: text().notNull().default(""),
+  transcript: text().notNull().default(""),
+  status: text().notNull().default("pending"), // pending | parsed | done | failed
+  error: text().notNull().default(""),
+  parser: text().notNull().default(""), // ai | rules
+  reviewRef: text().notNull().default(""), // 渠道里那张审批卡片的消息 id
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [uniqueIndex("idx_cap_ext").on(t.channel, t.externalId), index("idx_cap_status").on(t.status, t.createdAt)]);
+
+export const captureDrafts = sqliteTable("capture_drafts", {
+  id: text().primaryKey(),
+  captureId: text().notNull(),
+  position: integer().notNull().default(0),
+  type: text().notNull().default("item"), // item | progress | meeting | purchase | deal | trip | note
+  projectId: text(), // 空 = 拿不准，确认时进收件箱或由你选
+  projectConfidence: integer().notNull().default(0), // 0-100
+  title: text().notNull(),
+  detail: text().notNull().default(""),
+  dueAt: integer(),
+  priority: text().notNull().default("P1"),
+  targetItemId: text(), // type=progress：对应已有事项
+  done: integer().notNull().default(0), // progress 且已办完
+  waitingFor: text().notNull().default(""),
+  evidence: text().notNull().default(""), // 原话片段：为什么这样整理
+  fieldsJson: text().notNull().default("{}"), // 类型特有字段（金额、城市、日期…）
+  status: text().notNull().default("pending"), // pending | confirmed | rejected
+  resultType: text().notNull().default(""),
+  resultId: text().notNull().default(""),
+  decidedBy: text().notNull().default(""),
+  decidedAt: integer(),
+  createdAt: now(),
+}, (t) => [index("idx_cd_capture").on(t.captureId), index("idx_cd_status").on(t.status)]);
