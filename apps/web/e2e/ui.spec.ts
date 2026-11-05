@@ -103,3 +103,44 @@ test("事务页：日历、台账、采购、合作、行程可用", async ({ pa
   expect(await feed.text()).toContain("BEGIN:VCALENDAR");
   expect((await page.request.get(`${BASE}/api/calendar/cal_wrong.ics`)).status()).toBe(404);
 });
+
+test("今日与复盘：加入今天、在等别人、完成、保存复盘", async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByPlaceholder("you@example.com").fill(EMAIL);
+  await page.locator('input[type="password"]').fill(PASS);
+  await page.getByRole("button", { name: /登录|创建并进入/ }).click();
+  await page.waitForURL(`${BASE}/`);
+  const key = `TD${Date.now().toString(36).slice(-4).toUpperCase()}`;
+  const pr = await page.request.post(`${BASE}/api/v1/call/project_create`, { data: { key, name: `今日测试 ${key}` } });
+  const pid = (await pr.json()).data.project.id;
+  const add = await page.request.post(`${BASE}/api/v1/call/checklist_add`, { data: { project: pid, items: [{ title: `e2e 今天要写的文档 ${key}` }, { title: `e2e 等客户回复 ${key}` }] } });
+  const ids = (await add.json()).data.ids as string[];
+  await page.goto(`${BASE}/today`);
+  await expect(page.locator("h1").first()).toContainText("今日", { timeout: 20000 });
+  await page.getByRole("button", { name: "加入今天" }).click();
+  await page.getByPlaceholder("搜索事项或项目").fill(key);
+  await page.getByRole("button", { name: new RegExp(`e2e 今天要写的文档 ${key}`) }).click();
+  await page.getByRole("button", { name: /^加入 1$/ }).click();
+  await expect(page.getByRole("link", { name: `e2e 今天要写的文档 ${key}` })).toBeVisible();
+  // 在等别人
+  await page.request.post(`${BASE}/api/v1/call/checklist_update`, { data: { item_id: ids[1], waiting_for: "e2e 客户" } });
+  await page.reload();
+  await expect(page.getByText("e2e 客户").first()).toBeVisible();
+  // 完成要写结果
+  await page.locator("li", { hasText: `e2e 今天要写的文档 ${key}` }).getByTitle("完成").click();
+  await page.getByPlaceholder(/已提交并审核通过/).fill("文档已写完并发到群里，链接 https://x.cn/doc");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await expect(page.getByRole("link", { name: `e2e 今天要写的文档 ${key}` })).toHaveCount(0, { timeout: 10000 });
+  // 复盘
+  await page.goto(`${BASE}/review`);
+  await expect(page.getByRole("heading", { name: "定下周三件事" })).toBeVisible({ timeout: 20000 });
+  await page.getByPlaceholder("写一件事，或从右边选已有事项").first().fill(`e2e 本周重点 ${key}`);
+  await page.getByRole("button", { name: "保存复盘" }).click();
+  await expect(page.getByText("已确认。可以随时改。")).toBeVisible({ timeout: 10000 });
+  await page.goto(`${BASE}/today`);
+  await expect(page.getByText(`e2e 本周重点 ${key}`)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/today`);
+  const w = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(w).toBeLessThanOrEqual(392);
+});

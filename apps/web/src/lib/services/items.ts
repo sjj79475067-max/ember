@@ -31,6 +31,8 @@ export type UpdatePatch = {
   title?: string; detailMd?: string; doneDefinition?: string;
   kind?: string; milestoneId?: string | null; requirementId?: string | null; mustMeet?: boolean;
   startAt?: number | null; leadTimeDays?: number | null;
+  /** 秘书层：在等谁（空串=不等了）、什么时候催、计划哪天做（YYYY-MM-DD，空串=移出）、先放到哪天 */
+  waitingFor?: string; followUpAt?: number | null; plannedFor?: string; deferUntil?: number | null;
 };
 
 const OPEN_STATUSES = ["todo", "doing", "blocked", "changed"] as const;
@@ -246,6 +248,7 @@ export function updateItem(itemId: string, patch: UpdatePatch, actor: Actor, age
   if (patch.mustMeet !== undefined) set.mustMeet = patch.mustMeet ? 1 : 0;
   if (patch.startAt !== undefined) set.startAt = patch.startAt;
   if (patch.leadTimeDays !== undefined) set.leadTimeDays = patch.leadTimeDays;
+  applySecretaryPatch(cur, patch, set);
   db.transaction(() => {
     db.update(s.items).set(set).where(eq(s.items.id, itemId)).run();
     if (patch.status && patch.status !== cur.status) {
@@ -266,6 +269,34 @@ export function updateItem(itemId: string, patch: UpdatePatch, actor: Actor, age
   // 开工但前置没完成：不拦，只提醒（一人公司常有「先并行准备」的情况）
   const waits = patch.status === "doing" ? waitingOn(itemId) : [];
   return { item: updated, progress: progressFor(cur.projectId), flag, waitingOn: waits.map((w) => w.blockerTitle), nextRecur };
+}
+
+const DAY = 86400;
+export const FOLLOW_UP_DEFAULT_DAYS = 3;
+
+/** 等待/计划/搁置字段：交出去自动记日期并默认 3 天后催；改计划日清零滚动计数；完成即清空等待与计划 */
+function applySecretaryPatch(cur: typeof s.items.$inferSelect, patch: UpdatePatch, set: Record<string, unknown>) {
+  if (patch.waitingFor !== undefined) {
+    const w = patch.waitingFor.trim().slice(0, 80);
+    set.waitingFor = w;
+    if (w && w !== cur.waitingFor) {
+      set.delegatedAt = nowSec();
+      set.followUpAt = patch.followUpAt ?? nowSec() + FOLLOW_UP_DEFAULT_DAYS * DAY;
+    }
+    if (!w) { set.delegatedAt = null; set.followUpAt = null; }
+  }
+  if (patch.followUpAt !== undefined && (patch.waitingFor === undefined || patch.waitingFor.trim())) set.followUpAt = patch.followUpAt;
+  if (patch.plannedFor !== undefined) {
+    const d = patch.plannedFor.trim();
+    if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw Object.assign(new Error("planned_for 要写成 YYYY-MM-DD"), { status: 400 });
+    set.plannedFor = d;
+    if (d !== cur.plannedFor) set.rollCount = 0;
+  }
+  if (patch.deferUntil !== undefined) set.deferUntil = patch.deferUntil;
+  const finalStatus = (set.status as string | undefined) ?? cur.status;
+  if (finalStatus === "done" || finalStatus === "dropped") {
+    set.waitingFor = ""; set.followUpAt = null; set.plannedFor = ""; set.rollCount = 0;
+  }
 }
 
 /** 重复事项完成后生成下一期（同一根下只保留一个未完成的下一期，防止重复点完成生成多条） */

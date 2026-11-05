@@ -17,7 +17,7 @@ import { callTool } from "@/lib/ui-api";
 import { fmtDate, relTime, STATUS_LABEL, KIND_LABEL, daysLeft } from "@/lib/utils";
 import { toast } from "sonner";
 
-type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string; needsReview: number; supersededBy: string; kind: string; milestoneId: string | null; requirementId: string | null; mustMeet: number; startAt: number | null; leadTimeDays: number | null; createdAt: number; completedAt: number | null };
+type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string; needsReview: number; supersededBy: string; kind: string; milestoneId: string | null; requirementId: string | null; mustMeet: number; startAt: number | null; leadTimeDays: number | null; createdAt: number; completedAt: number | null; waitingFor?: string; followUpAt?: number | null; plannedFor?: string };
 type Ms = { id: string; name: string; status: string; kind: string; position: number; startAt: number | null; dueAt: number | null };
 type Plan = {
   milestones: Ms[]; requirements: Req[];
@@ -382,6 +382,8 @@ function Checklist({ items, allItems, parked, groups, projectId, projects, filte
             {groupBy !== "phase" && it.milestoneId && <Badge>{msName.get(it.milestoneId)}</Badge>}
             {it.requirementId && <Badge tone="brand">{reqCode.get(it.requirementId)}</Badge>}
             {waitingSet.has(it.id) && !["done", "dropped"].includes(it.status) && <Badge tone="warn"><Link2 className="size-3" />等前置</Badge>}
+            {it.waitingFor && <Badge tone={it.followUpAt && it.followUpAt * 1000 <= Date.now() ? "warn" : "default"}>⏳ 等 {it.waitingFor}{it.followUpAt && it.followUpAt * 1000 <= Date.now() ? " · 该催了" : ""}</Badge>}
+            {it.plannedFor && it.plannedFor === new Date().toLocaleDateString("sv-SE") && <Badge tone="brand">今天</Badge>}
             {it.leadTimeDays ? <span className="text-[11px] text-[var(--color-muted)]">通常 {it.leadTimeDays} 天</span> : null}
             {it.priority !== "P1" && <Badge tone={it.priority === "P0" ? "danger" : "default"}>{it.priority}</Badge>}
             {it.dueAt && <Badge tone={d! < 0 ? "danger" : d! <= 2 ? "warn" : "default"}><Calendar className="size-3" />{fmtDate(it.dueAt)}{d! < 0 ? ` 逾期${-d!}天` : ""}</Badge>}
@@ -493,7 +495,8 @@ function ItemSettings({ item, plan, all, onClose, onDone }: { item: Item; plan: 
     kind: item.kind || "task", milestone: item.milestoneId ? plan.milestones.find((m) => m.id === item.milestoneId)?.name ?? "" : "",
     requirement: item.requirementId ? plan.requirements.find((r) => r.id === item.requirementId)?.code ?? "" : "",
     must: item.mustMeet === 1, start: toDate(item.startAt), due: toDate(item.dueAt), lead: item.leadTimeDays ? String(item.leadTimeDays) : "",
-    doneDef: item.doneDefinition,
+    doneDef: item.doneDefinition, waiting: item.waitingFor ?? "", followUp: toDate(item.followUpAt ?? null),
+    today: !!item.plannedFor && item.plannedFor === new Date().toLocaleDateString("sv-SE"),
   });
   const blockers = plan.deps.filter((d) => d.blockedId === item.id).map((d) => d.blockerId);
   const [newBlocker, setNewBlocker] = useState("");
@@ -502,6 +505,9 @@ function ItemSettings({ item, plan, all, onClose, onDone }: { item: Item; plan: 
       item_id: item.id, kind: f.kind, milestone: f.milestone || null, requirement: f.requirement || null, must_meet: f.must,
       start_at: fromDate(f.start), due_at: fromDate(f.due), lead_time_days: f.lead ? Number(f.lead) : null,
       done_definition: f.doneDef,
+      ...(f.waiting !== (item.waitingFor ?? "") ? { waiting_for: f.waiting } : {}),
+      ...(f.waiting && f.followUp !== toDate(item.followUpAt ?? null) ? { follow_up_at: fromDate(f.followUp) } : {}),
+      ...(f.today !== (!!item.plannedFor && item.plannedFor === new Date().toLocaleDateString("sv-SE")) ? { planned_for: f.today ? "today" : "" } : {}),
     });
     if (!r.ok) return toast.error(r.error ?? "失败");
     if (newBlocker) {
@@ -528,6 +534,9 @@ function ItemSettings({ item, plan, all, onClose, onDone }: { item: Item; plan: 
           <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">开始</span><Input type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></label>
           <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">截止</span><Input type="date" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></label>
           <label className="col-span-2 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">完成标准（做到什么程度算完）</span><Input value={f.doneDef} onChange={(e) => setF({ ...f, doneDef: e.target.value })} placeholder="如：拿到备案号并登记到资料" /></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">在等谁（交出去/等审核）</span><Input value={f.waiting} onChange={(e) => setF({ ...f, waiting: e.target.value })} placeholder="如 管局审核 / 王经理" /></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">哪天去催（默认 3 天后）</span><Input type="date" disabled={!f.waiting} value={f.followUp} onChange={(e) => setF({ ...f, followUp: e.target.value })} /></label>
+          <label className="col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={f.today} onChange={(e) => setF({ ...f, today: e.target.checked })} />放进今天的计划</label>
           <label className="col-span-2 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">通常需要几天（备案、认证、采购到货等）</span><Input type="number" min={0} value={f.lead} onChange={(e) => setF({ ...f, lead: e.target.value })} placeholder="如 20" /></label>
         </div>
         <div>

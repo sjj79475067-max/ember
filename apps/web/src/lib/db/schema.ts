@@ -148,6 +148,12 @@ export const items = sqliteTable("items", {
   recurRule: text().notNull().default(""), // monthly:15 | quarterly:15 | yearly:05-31
   recurParentId: text().notNull().default(""),
   supersededBy: text().notNull().default(""), // 被哪个更新后的任务替代（版本更迭链）
+  waitingFor: text().notNull().default(""), // 在等谁/什么（GTD Waiting For）
+  delegatedAt: integer(),
+  followUpAt: integer(),
+  plannedFor: text().notNull().default(""), // YYYY-MM-DD 计划哪天做
+  rollCount: integer().notNull().default(0),
+  deferUntil: integer(),
   parentId: text(),
   title: text().notNull(),
   detailMd: text().notNull().default(""),
@@ -508,3 +514,16 @@ export type Reminder = typeof reminders.$inferSelect;
 export type Meeting = typeof meetings.$inferSelect;
 export type FileRef = typeof fileRefs.$inferSelect;
 export type Policy = typeof policies.$inferSelect;
+
+// ---------- 每周复盘 ----------
+export const weeklyReviews = sqliteTable("weekly_reviews", {
+  id: text().primaryKey(),
+  weekStart: text().notNull().unique(), // YYYY-MM-DD（周一）
+  top3Json: text().notNull().default("[]"), // [{title, itemId?}]
+  notesMd: text().notNull().default(""),
+  statsJson: text().notNull().default("{}"),
+  status: text({ enum: ["draft", "done"] }).notNull().default("draft"),
+  author: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+});

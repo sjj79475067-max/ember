@@ -14,6 +14,7 @@ import { listPurchases, savePurchase, addQuote, PURCHASE_STATUS } from "@/lib/se
 import { listDeals, saveDeal, saveContact, listContacts, DEAL_STAGES } from "@/lib/services/crm";
 import { listTrips, saveTrip } from "@/lib/services/trips";
 import { agenda } from "@/lib/services/calendar";
+import { secretaryOverview, planToday, weeklyMaterial, saveWeeklyReview, localYmd } from "@/lib/services/secretary";
 import { addOwnedItems } from "@/lib/services/owned";
 import { validRecur } from "@/lib/services/recur";
 import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
@@ -423,10 +424,15 @@ export const tools: ToolDef[] = [
       start_at: iso.nullable().optional(),
       lead_time_days: z.number().int().nullable().optional(),
       done_definition: z.string().optional().describe("完成标准：做到什么程度算完"),
+      waiting_for: z.string().optional().describe("交给别人/在等外部（客户、平台审核、供应商…）时写在等谁；会自动记交出日期并默认 3 天后提醒去催。对方回复了传空串清掉"),
+      follow_up_at: iso.nullable().optional().describe("什么时候去催（默认交出后 3 天）"),
+      planned_for: z.string().optional().describe("计划哪天做，YYYY-MM-DD；传 'today' 表示今天；空串移出计划"),
+      defer_until: iso.nullable().optional().describe("先放一放：这天之前不出现在今日和到期提醒里"),
     }),
     handler: async (i, ctx) => {
       const before = db.select().from(s.items).all().find((x) => x.id === i.item_id);
       if (before) gate(ctx, before.projectId, "checklist_update");
+      if (i.planned_for === "today") i.planned_for = localYmd();
       if (i.status === "done" && !(i.evidence || i.note)) throw Object.assign(new Error("验收失败：status=done 必须提供 evidence（做了什么、如何验证）"), { status: 422 });
       if (i.status === "blocked" && !i.block_reason) throw Object.assign(new Error("请提供 block_reason 说明卡在哪里、需要谁做什么"), { status: 422 });
       try {
@@ -436,12 +442,14 @@ export const tools: ToolDef[] = [
           dueAt: i.due_at as never, priority: i.priority as never, expectedVersion: i.expected_version,
           kind: i.kind, milestoneId: st.milestoneId, requirementId: st.requirementId, mustMeet: i.must_meet,
           startAt: i.start_at as never, leadTimeDays: i.lead_time_days as never, doneDefinition: i.done_definition,
+          waitingFor: i.waiting_for, followUpAt: i.follow_up_at as never, plannedFor: i.planned_for, deferUntil: i.defer_until as never,
         }, ctx.actor, i.session_id, ctx.ip);
         if (i.group !== undefined) {
           setItemGroup(i.item_id, i.group);
           res.item = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get()!;
         }
         const hints: string[] = [];
+        if (i.waiting_for && res.item.followUpAt) hints.push(`已记为在等「${res.item.waitingFor}」，${new Date(res.item.followUpAt * 1000).toLocaleDateString("zh-CN")} 会提醒去催。`);
         if (res.nextRecur) hints.push(`这是重复事项，已生成下一期（截止 ${new Date(res.nextRecur.dueAt! * 1000).toLocaleDateString("zh-CN")}）。`);
         if (res.waitingOn?.length) hints.push(`提醒：前置事项还没完成（${res.waitingOn.join("、")}），确认可以并行再继续。`);
         if (res.flag === "evidence_is_progress") {
@@ -910,6 +918,62 @@ export const tools: ToolDef[] = [
       contacts_to_follow: listContacts().filter((c) => c.overdueContact).map((c) => ({ id: c.id, name: c.name, org: c.orgName, days_since: c.daysSince })),
       trips: listTrips({ upcoming: true }).map((t) => ({ id: t.id, title: t.title, city: t.city, start_at: t.startAt, end_at: t.endAt, phase: t.phase, prep_open: t.prepOpen })),
     }),
+  },
+  {
+    name: "today",
+    title: "秘书：今天的全部（做什么 / 要拍板 / 在等谁 / 快到期 / 拖着没动）",
+    description:
+      "开工先调这个。返回：today 今天要做的（逾期→今天到期→计划→进行中；P0 不自动进，由用户挑）；decisions 只有用户能定的事；waiting 在等别人的（nudge=该催了）；upcoming 7 天内的台账/合作/采购/行程节点；stale 一拖再拖或 14 天没动的；top3 本周三件事。\n" +
+      "plan_add / plan_remove：把事项加入/移出今天的计划（只放你今天真会做的）。",
+    write: true,
+    input: z.object({ plan_add: z.array(z.string()).optional(), plan_remove: z.array(z.string()).optional() }),
+    handler: async (i, ctx) => {
+      const changed = (i.plan_add?.length ?? 0) + (i.plan_remove?.length ?? 0);
+      if (changed) {
+        for (const id of [...(i.plan_add ?? []), ...(i.plan_remove ?? [])]) {
+          const it = db.select().from(s.items).where(eq(s.items.id, id)).get();
+          if (it) gate(ctx, it.projectId, "today");
+        }
+        if (i.plan_add?.length) planToday(i.plan_add, true, ctx.actor);
+        if (i.plan_remove?.length) planToday(i.plan_remove, false, ctx.actor);
+      }
+      const o = secretaryOverview();
+      const hints: string[] = [];
+      if (o.counts.nudge) hints.push(`有 ${o.counts.nudge} 件到了该催的时候，替用户起草催办消息或提醒用户。`);
+      if (o.stale.some((x) => x.reason === "rolled")) hints.push("有事项连续多天计划了没做：问用户是今天做、改日期、先放一放还是不做了，不要默默再滚一天。");
+      if (!o.top3.length) hints.push("本周还没定三件事：可用 weekly_review 起草，用户在网页确认。");
+      return envelope({
+        date: o.date, counts: o.counts,
+        top3: o.top3,
+        today: o.today.map((x) => ({ id: x.id, title: x.title, project: x.projectName, why: x.why, status: x.status, priority: x.priority, due_at: x.dueAt, rolled: x.rollCount || undefined })),
+        decisions: o.decisions.map((d) => ({ kind: d.kind, label: d.label, title: d.title, detail: d.detail, target: `${d.targetType}:${d.targetId}` })),
+        waiting: o.waiting.map((w) => ({ id: w.id, title: w.title, project: w.projectName, waiting_for: w.waitingFor, waited_days: w.waitedDays, follow_up_at: w.followUpAt, nudge: w.nudge || undefined })),
+        upcoming: o.upcoming.map((e) => ({ kind: e.kind, title: e.title, at: e.start, note: e.note })),
+        stale: o.stale.map((x) => ({ id: x.id, title: x.title, project: x.projectName, reason: x.reason, roll_count: x.rollCount, idle_days: x.idleDays })),
+      }, hints);
+    },
+  },
+  {
+    name: "weekly_review",
+    title: "每周复盘（取素材 / 起草本周三件事）",
+    description:
+      "不带 top3：返回本周复盘素材（完成、新增、延期、放弃、等待、拖延、没有下一步的项目、上周三件事完成情况）。\n" +
+      "带 top3（最多 3 条，可带 item_id）+ notes：保存为草稿，用户在网页「复盘」确认后生效；用户已确认的复盘 agent 不能改。",
+    write: true,
+    input: z.object({
+      week: z.string().optional().describe("周一日期 YYYY-MM-DD，默认本周"),
+      top3: z.array(z.object({ title: z.string(), item_id: z.string().optional() })).max(3).optional(),
+      notes: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      if (i.top3) {
+        gate(ctx, null, "weekly_review");
+        const r = saveWeeklyReview({ week: i.week, top3: i.top3.map((x: { title: string; item_id?: string }) => ({ title: x.title, itemId: x.item_id })), notesMd: i.notes }, ctx.actor);
+        return envelope({ review: { week: r.weekStart, status: r.status, top3: r.top3, notes: r.notesMd } }, r.status === "draft" ? ["已保存为草稿，请用户到网页「复盘」确认。"] : []);
+      }
+      const m = weeklyMaterial(i.week);
+      return envelope(m as unknown as Record<string, unknown>);
+    },
   },
   {
     name: "calendar_agenda",

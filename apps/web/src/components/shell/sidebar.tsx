@@ -2,16 +2,18 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen, Newspaper, Layers, Briefcase } from "lucide-react";
+import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen, Newspaper, Layers, Briefcase, Sun, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 
 const NAV = [
+  { href: "/today", label: "今日", icon: Sun },
   { href: "/", label: "总览", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/affairs", label: "事务", icon: Briefcase },
   { href: "/meetings", label: "会议档案", icon: CalendarCheck },
+  { href: "/review", label: "每周复盘", icon: Target },
   { href: "/brief", label: "简报", icon: Newspaper },
   { href: "/matrix", label: "智能体", icon: Layers },
   { href: "/files", label: "资料位置", icon: Files },
@@ -88,10 +90,10 @@ export function Sidebar({ user, unread }: { user: { name: string; email: string 
 
 function MobileNav({ path, unread, onSearch }: { path: string; unread: number; onSearch: () => void }) {
   const ITEMS = [
+    { href: "/today", label: "今日", icon: Sun },
     { href: "/", label: "总览", icon: LayoutDashboard },
     { href: "/projects", label: "项目", icon: FolderKanban },
     { href: "/affairs", label: "事务", icon: Briefcase },
-    { href: "/brief", label: "简报", icon: Newspaper },
     { href: "/inbox", label: "提醒", icon: Bell },
     { href: "/settings", label: "设置", icon: Settings },
   ];

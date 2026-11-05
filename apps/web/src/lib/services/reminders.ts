@@ -128,6 +128,16 @@ export function refreshReminders() {
   for (const tr of db.select().from(s.trips).all()) {
     if (tr.startAt > t && tr.startAt - t <= 3 * DAY) upsert({ kind: "due", severity: "P1", title: `即将出行：${tr.title}`, bodyMd: `${iso(tr.startAt)} 出发${tr.city ? `，去 ${tr.city}` : ""}。检查出行准备清单。`, projectId: tr.projectId, targetType: "trip", targetId: tr.id, dedupeKey: `trip:${tr.id}` });
   }
+  // 等别人：到了该催的日子
+  for (const it of openItems) {
+    if (it.waitingFor && it.followUpAt && it.followUpAt <= t) {
+      const days = it.delegatedAt ? Math.floor((t - it.delegatedAt) / DAY) : null;
+      upsert({ kind: "review", severity: "P1", title: `该催了：${it.title}`, bodyMd: `在等「${it.waitingFor}」${days != null ? `，已经 ${days} 天` : ""}。问一下进展，或改催办日期；对方回复了就清掉等待。`, projectId: it.projectId, targetId: it.id, dedupeKey: `nudge:${it.id}:${it.followUpAt}` });
+    }
+    if (it.rollCount >= 3 && !it.waitingFor) {
+      upsert({ kind: "review", severity: "P2", title: `一拖再拖：${it.title}`, bodyMd: `已经连续 ${it.rollCount} 天计划了没做。今天就做、改日期、先放一放，还是不做了？`, projectId: it.projectId, targetId: it.id, dedupeKey: `rolled:${it.id}:${ymdWeek(t)}` });
+    }
+  }
   // 收件箱积压
   const inbox = db.select().from(s.projects).where(eq(s.projects.isInbox, 1)).get();
   if (inbox) {

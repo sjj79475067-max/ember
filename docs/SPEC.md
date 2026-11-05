@@ -96,6 +96,9 @@
 - 完成证据判据：`done` 但证据是「进行到哪一步」而非「做到了什么程度」→ 自动标 `needsReview=1`，产生待核实提醒，`checklist_verify` 列为 gap。
 - `checklist_verify` 额外检查：进行中无人认领、变更无说明、缺完成标准、疑似重复。
 
+## 5.3 秘书层
+详见 `SPEC-BATCH3.md`：今日（/today）、在等别人（waitingFor + 催办日）、计划日自动顺延与拖延识别、需要你拍板、每周复盘（/review，agent 起草=草稿）。P0 不自动进今天，今天做什么由用户挑。
+
 ## 6. 提醒引擎
 
 - 触发：到期前 3 天（due）、逾期（overdue）、阻塞（blocked）、必读未确认（policy）、资料超 30 天未核验或缺失（stale_file）。

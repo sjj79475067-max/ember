@@ -2,6 +2,7 @@ import { db, s } from "@/lib/db";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { chat, getDefaultProvider } from "./provider";
 import { nowSec } from "@/lib/id";
+import { secretaryOverview } from "@/lib/services/secretary";
 
 const DAY = 86400;
 
@@ -29,7 +30,15 @@ export async function buildBrief(kind: "daily" | "weekly", useAi = true): Promis
   const staleFiles = db.select().from(s.fileRefs)
     .where(sql`${s.fileRefs.lastVerifiedAt} is null or ${s.fileRefs.lastVerifiedAt} < ${now - 30 * DAY}`).all();
 
+  const sec = secretaryOverview();
+  const WHY: Record<string, string> = { overdue: "逾期", due_today: "今天到期", planned: "计划", doing: "进行中", p0: "P0" };
   const sections: BriefSection[] = [
+    ...(sec.top3.length ? [{ title: "本周三件事", lines: sec.top3.map((x) => `${x.status === "done" ? "✅" : "⬜"} ${x.title}`) }] : []),
+    ...(kind === "daily" ? [{ title: "今天做什么", lines: sec.today.slice(0, 12).map((i) => `[${WHY[i.why]}] ${i.title}${i.projectName ? `（${i.projectName}）` : ""}${i.rollCount >= 3 ? ` ⚠ 已拖 ${i.rollCount} 天` : ""}`) }] : []),
+    { title: "需要你拍板", lines: sec.decisions.filter((d) => !["blocked", "changed"].includes(d.kind)).slice(0, 10).map((d) => `${d.label}：${d.title}`) },
+    { title: "在等别人", lines: sec.waiting.slice(0, 10).map((w) => `${w.nudge ? "🔔 该催了 " : ""}${w.title} ← 等 ${w.waitingFor}${w.waitedDays != null ? `（${w.waitedDays} 天）` : ""}`) },
+    { title: "7 天内到期（事务）", lines: sec.upcoming.slice(0, 10).map((e) => `${e.title} —— ${fmt(e.start)}`) },
+    ...(kind === "weekly" ? [{ title: "拖着没动", lines: sec.stale.slice(0, 10).map((x) => `${x.title}（${x.reason === "rolled" ? `拖了 ${x.rollCount} 次` : `${x.idleDays} 天没动`}）`) }] : []),
     { title: "需要你决定", lines: [
       ...blocked.map((i) => `⛔ ${i.title}（${projName.get(i.projectId) ?? "—"}）：${i.blockReason || "未说明原因"}`),
       ...changed.map((i) => `🔁 ${i.title}（${projName.get(i.projectId) ?? "—"}）已变更，请确认是否符合预期`),

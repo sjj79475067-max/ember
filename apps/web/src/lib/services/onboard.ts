@@ -8,6 +8,7 @@ import { listAssets } from "./assets";
 import { listDeals } from "./crm";
 import { listPurchases } from "./purchases";
 import { agenda } from "./calendar";
+import { secretaryOverview } from "./secretary";
 
 export function agentOnboard(agent: { name: string; sessionId: string }) {
   const projects = listProjects({});
@@ -62,6 +63,15 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
         next_7_days: agenda(now - 86400, now + 7 * 86400).filter((e) => e.tone !== "ok").slice(0, 12).map((e) => ({ kind: e.kind, title: e.title, at: e.start })),
       };
     })(),
+    secretary: (() => {
+      const o = secretaryOverview();
+      return {
+        date: o.date, counts: o.counts,
+        top3_this_week: o.top3.map((x) => ({ title: x.title, item_id: x.itemId, status: x.status })),
+        nudge_now: o.waiting.filter((w) => w.nudge).slice(0, 5).map((w) => ({ item_id: w.id, title: w.title, waiting_for: w.waitingFor, waited_days: w.waitedDays })),
+        how: "调用 today 拿完整的今日五块。",
+      };
+    })(),
     since_last_time: changelog.map((c) => ({ version: c.version, title: c.title })),
     how_to_work: WORKFLOW,
   };
@@ -73,11 +83,13 @@ const WORKFLOW = [
   "3. 看全貌：project_board(project) 一次拿到当前阶段、能不能发版、缺哪几项、谁卡着谁、需求漏斗；再用 checklist_list(project, status='open') 看具体事项。不要凭记忆假设。",
   "3b. 需求闭环：用户提出的每个要求先 requirement_save 记成需求；确认要做后 checklist_add 拆事项时带 requirement=编号。不做了就 status=dropped 并写 close_reason（需用户确认）。不允许有需求悄悄消失。",
   "3c. 结构：新项目用 project_create(template=app/miniprogram/saas/client/basic) 自动建好阶段和备案、软著、账号、隐私协议等配套事项；老项目用 template_apply 补。新事项写 kind（资质/账号/采购/合同…）、milestone、must_meet；有先后关系用 item_link 或 blocked_by。",
+  "3d. 秘书：开工先调 today，看用户今天要做什么、要拍板什么、在等谁；优先帮用户推进 today 和本周三件事（top3）。",
   "4. 开工：claim_item 认领（会显示他人认领情况），着手做；记得每 30 分钟 sync 一次心跳。",
   "5. 记录：会议由 meeting_import 归档并自动抽取事务；决定用 decision_record；零散知识用 note_save。",
   "6. 核销：完成后 checklist_update status='done' 必须带 evidence（做了什么、在哪验证、链接/路径）。证据要说清【做到什么程度】——只写「已对接」「在推进」「完成一半」会被判定为进度而不是完成，任务进入待核实。",
   "6b. 进展：同一件事往前走了一步（见客户、发了材料、拿到反馈）用 checklist_progress 记在该任务上；不要用 checklist_add 新建「跟进××」这类过程性条目。",
   "6c. 版本：需求变了导致原目标作废时用 checklist_supersede 升级为新版本，旧任务会自动关闭并注明被取代；关联事项用 parent_id 挂到上一级，别平铺。",
+  "6d. 等待：事情交给别人或在等外部（客户回复、平台审核、供应商发货）时，checklist_update 写 waiting_for（在等谁），会自动 3 天后提醒去催；对方回复了清空 waiting_for 或直接核销。不要把「等审核」写成 blocked。",
   "7. 变更：做不了按原样完成就 status='changed' 并写清变更内容（新范围、对谁有影响）；被卡住 status='blocked' + block_reason。",
   "8. 收尾：收工前 checklist_verify 全量核对，把 gaps 补齐；file_register 登记产物位置；session_end 写总结。",
   "9. 提醒：工具返回值里 reminders_unread 有未读提醒，先处理 P0。",
