@@ -51,9 +51,75 @@ export const projects = sqliteTable("projects", {
   githubRepo: text().notNull().default(""),
   archiveNote: text().notNull().default(""),
   position: integer().notNull().default(0),
+  template: text().notNull().default(""),
+  updateEveryDays: integer().notNull().default(7),
   createdAt: now(),
   updatedAt: now(),
 }, (t) => [index("idx_projects_status").on(t.status)]);
+
+// ---------- 阶段 / 发布 ----------
+export const milestones = sqliteTable("milestones", {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  name: text().notNull(),
+  kind: text({ enum: ["phase", "release"] }).notNull().default("phase"),
+  position: integer().notNull().default(0),
+  goal: text().notNull().default(""),
+  startAt: integer(),
+  dueAt: integer(),
+  status: text({ enum: ["planned", "active", "done", "cancelled"] }).notNull().default("planned"),
+  gateDecision: text({ enum: ["pending", "go", "hold", "kill"] }).notNull().default("pending"),
+  gateNote: text().notNull().default(""),
+  gateDecidedAt: integer(),
+  gateDecidedBy: text().notNull().default(""),
+  gateProposal: text().notNull().default(""),
+  templateKey: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_ms_project").on(t.projectId, t.position)]);
+
+// ---------- 需求（提了就要有着落） ----------
+export const requirements = sqliteTable("requirements", {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  code: text().notNull(),
+  title: text().notNull(),
+  detailMd: text().notNull().default(""),
+  source: text().notNull().default(""),
+  priority: text({ enum: ["P0", "P1", "P2", "P3"] }).notNull().default("P1"),
+  milestoneId: text(),
+  status: text({ enum: ["proposed", "accepted", "in_progress", "done", "dropped"] }).notNull().default("proposed"),
+  closeReason: text().notNull().default(""),
+  closeConfirmed: integer().notNull().default(1),
+  closedAt: integer(),
+  closedBy: text().notNull().default(""),
+  createdBy: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_req_project").on(t.projectId, t.status), uniqueIndex("idx_req_code").on(t.projectId, t.code)]);
+
+// ---------- 依赖：blocker 完成后 blocked 才能开始 ----------
+export const itemDeps = sqliteTable("item_deps", {
+  id: text().primaryKey(),
+  blockerId: text().notNull(),
+  blockedId: text().notNull(),
+  lagDays: integer().notNull().default(0),
+  createdBy: text().notNull().default(""),
+  createdAt: now(),
+}, (t) => [uniqueIndex("idx_dep_pair").on(t.blockerId, t.blockedId), index("idx_dep_blocked").on(t.blockedId)]);
+
+// ---------- 项目更新（健康度来源） ----------
+export const projectUpdates = sqliteTable("project_updates", {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  health: text({ enum: ["on_track", "at_risk", "off_track"] }).notNull(),
+  progressMd: text().notNull().default(""),
+  blockersMd: text().notNull().default(""),
+  nextMd: text().notNull().default(""),
+  autoSummary: text().notNull().default(""),
+  author: text().notNull().default(""),
+  createdAt: now(),
+}, (t) => [index("idx_pu_project").on(t.projectId, t.createdAt)]);
 
 export const workstreams = sqliteTable("workstreams", {
   id: text().primaryKey(),
@@ -70,6 +136,13 @@ export const items = sqliteTable("items", {
   workstreamId: text(),
   parkingLot: integer(),
   needsReview: integer().notNull().default(0), // 1 = 已完成但证据与标题对不上，待核实
+  kind: text().notNull().default("task"), // feature|task|compliance|account|purchase|contract|finance|release|risk|doc
+  milestoneId: text(),
+  requirementId: text(),
+  mustMeet: integer().notNull().default(0), // 1 = 所在阶段的必过项
+  startAt: integer(),
+  leadTimeDays: integer(),
+  templateKey: text().notNull().default(""),
   supersededBy: text().notNull().default(""), // 被哪个更新后的任务替代（版本更迭链）
   parentId: text(),
   title: text().notNull(),

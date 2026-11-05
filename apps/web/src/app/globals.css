@@ -36,3 +36,11 @@ main { overflow-x: clip; }
 @media (max-width: 419px) {
   .grid { grid-template-columns: minmax(0, 1fr) !important; }
 }
+
+/* 统一的细滚动条，跟随明暗主题（避免暗色下出现白色滚动条） */
+* { scrollbar-width: thin; scrollbar-color: var(--color-line) transparent; }
+*::-webkit-scrollbar { height: 6px; width: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 999px; }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

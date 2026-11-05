@@ -14,11 +14,20 @@ import { toast } from "sonner";
 
 type P = { id: string; key: string; name: string; kind: string; status: string; summaryMd: string; dueAt: number | null; progress: { total: number; done: number; blocked: number; overdue: number } };
 
+const TEMPLATE_OPTS = [
+  { key: "", name: "不用模板", hint: "空项目，之后再补" },
+  { key: "app", name: "App 上架", hint: "设计→开发→测试→上线；ICP/公安/App 备案、软著、隐私协议、各商店账号与提审" },
+  { key: "miniprogram", name: "微信小程序", hint: "账号认证、小程序备案、类目资质、隐私指引、合法域名、提审" },
+  { key: "saas", name: "网站 / SaaS", hint: "域名、服务器、ICP/公安备案、HTTPS、协议、支付短信；可选经营许可证、等保" },
+  { key: "client", name: "客户交付", hint: "签约→实施→验收→结项；合同、需求确认单、验收单、开票、回款" },
+  { key: "basic", name: "通用三阶段", hint: "计划→执行→收尾，不预置事项" },
+];
+
 export function ProjectsClient({ initial, openNew }: { initial: P[]; openNew: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(openNew);
   const [q, setQ] = useState("");
-  const [form, setForm] = useState({ key: "", name: "", kind: "admin", summary_md: "", due: "" });
+  const [form, setForm] = useState({ key: "", name: "", kind: "admin", summary_md: "", due: "", template: "" });
 
   const filtered = initial.filter((p) => !q || p.name.includes(q) || p.key.toLowerCase().includes(q.toLowerCase()));
 
@@ -27,11 +36,13 @@ export function ProjectsClient({ initial, openNew }: { initial: P[]; openNew: bo
     const r = await callTool("project_create", {
       key: form.key.trim().toUpperCase(), name: form.name.trim(), kind: form.kind, summary_md: form.summary_md,
       due_at: form.due ? Math.floor(new Date(form.due + "T18:00:00").getTime() / 1000) : undefined,
+      template: form.template || undefined,
     });
     if (!r.ok) return toast.error(r.error ?? "创建失败");
-    toast.success("项目已创建");
+    toast.success(form.template ? "项目已创建，阶段与配套事项已就位" : "项目已创建");
     setOpen(false);
-    router.refresh();
+    const id = (r.data as { project?: { id: string } } | undefined)?.project?.id;
+    if (id) router.push(`/p/${id}`); else router.refresh();
   }
 
   return (
@@ -76,7 +87,7 @@ export function ProjectsClient({ initial, openNew }: { initial: P[]; openNew: bo
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>新建项目</DialogTitle><DialogDescription>IT 项目、事务性工作、客户交付或资料库都能放。</DialogDescription></DialogHeader>
           <div className="grid grid-cols-3 gap-3">
             <label className="col-span-1 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">代号</span><Input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="IT" /></label>
@@ -87,6 +98,16 @@ export function ProjectsClient({ initial, openNew }: { initial: P[]; openNew: bo
               </select>
             </label>
             <label className="col-span-2 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">截止日期（可选）</span><Input type="date" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} /></label>
+            <div className="col-span-3 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">模板（自动建阶段、必过项、资质与配套事项和依赖）</span>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {TEMPLATE_OPTS.map((t) => (
+                  <button type="button" key={t.key} onClick={() => setForm({ ...form, template: t.key, kind: t.key === "client" ? "client" : t.key && t.key !== "basic" ? "it" : form.kind })}
+                    className={`rounded-lg border p-2 text-left ${form.template === t.key ? "border-[var(--color-brand)] bg-[var(--color-brand-soft)]/50" : "border-[var(--color-line)] hover:bg-[var(--color-line)]/30"}`}>
+                    <p className="text-[13px] font-medium">{t.name}</p><p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-[var(--color-muted)]">{t.hint}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="col-span-3 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">说明</span><Textarea rows={3} value={form.summary_md} onChange={(e) => setForm({ ...form, summary_md: e.target.value })} placeholder="背景、目标、交付物…" /></label>
           </div>
           <DialogFooter><Button variant="ghost" onClick={() => setOpen(false)}>取消</Button><Button onClick={submit}>创建</Button></DialogFooter>

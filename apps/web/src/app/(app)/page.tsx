@@ -2,6 +2,8 @@ import Link from "next/link";
 import { db, s } from "@/lib/db";
 import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { listProjects } from "@/lib/services/projects";
+import { portfolioCards } from "@/lib/services/board";
+import { HEALTH_LABEL, MS_STATUS_LABEL } from "@/lib/labels";
 import { pullReminders } from "@/lib/services/reminders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +22,8 @@ export default async function Dashboard() {
     .where(and(isNotNull(s.items.dueAt), lte(s.items.dueAt, week), gte(s.items.dueAt, 0), sql`${s.items.status} not in ('done','dropped')`))
     .orderBy(s.items.dueAt).limit(8).all();
   const recentMeetings = db.select().from(s.meetings).orderBy(desc(s.meetings.heldAt)).limit(4).all();
+  type Card = { id: string; health: string; healthSource: string; updateMissing: boolean; current: string | null; release: { name: string; mustDone: number; mustTotal: number; ready: boolean; daysLeft: number | null } | null; waiting: number; phases: Array<{ name: string; status: string; startAt: number | null; dueAt: number | null; done: number; total: number }> };
+  const cards = new Map((portfolioCards() as Card[]).map((c) => [c.id, c]));
   const totals = active.reduce((a, p) => ({ total: a.total + p.progress.total, done: a.done + p.progress.done, blocked: a.blocked + p.progress.blocked, overdue: a.overdue + p.progress.overdue }), { total: 0, done: 0, blocked: 0, overdue: 0 });
 
   return (
@@ -44,29 +48,46 @@ export default async function Dashboard() {
           <h2 className="mb-2.5 text-sm font-semibold text-[var(--color-muted)]">项目进度</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             {active.length === 0 && <Empty text="还没有项目。从右上角导入会议记录开始，或在「项目」页新建。" />}
-            {active.map((p) => (
+            {active.map((p) => {
+              const c = cards.get(p.id);
+              const h = c ? HEALTH_LABEL[c.health] : null;
+              return (
               <Link key={p.id} href={`/p/${p.id}`}>
                 <Card className="group h-full transition-all hover:-translate-y-0.5 hover:shadow-md">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{p.name}</p>
-                        <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">{p.key} · {KIND_LABEL[p.kind]}</p>
+                        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                          {h && <span title={`健康：${h.label}${c?.healthSource === "system" ? "（系统判断）" : ""}`} className={`size-2 shrink-0 rounded-full ${h.tone === "ok" ? "bg-[var(--color-ok)]" : h.tone === "warn" ? "bg-[var(--color-warn)]" : "bg-[var(--color-danger)]"}`} />}
+                          {p.name}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">{p.key} · {KIND_LABEL[p.kind]}{c?.current ? ` · 当前：${c.current}` : ""}</p>
                       </div>
                       <ArrowRight className="size-4 shrink-0 -translate-x-1 text-[var(--color-muted)] opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
                     </div>
-                    <Progress done={p.progress.done} total={p.progress.total} />
+                    {c && c.phases.length > 0 ? (
+                      <div className="mt-3 flex gap-0.5" title="阶段进度">
+                        {c.phases.map((ph) => (
+                          <div key={ph.name} className="min-w-0 flex-1" title={`${ph.name} · ${MS_STATUS_LABEL[ph.status]} · ${ph.done}/${ph.total}`}>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-line)]"><div className={`h-full ${ph.status === "done" ? "bg-[var(--color-ok)]" : "bg-[var(--color-brand)]"}`} style={{ width: `${ph.status === "done" ? 100 : ph.total ? Math.round((ph.done / ph.total) * 100) : 0}%` }} /></div>
+                            <p className={`mt-1 truncate text-[10px] ${ph.status === "active" ? "font-medium text-[var(--color-fg)]" : "text-[var(--color-muted)]"}`}>{ph.name}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <Progress done={p.progress.done} total={p.progress.total} />}
                     <div className="mt-2 flex flex-wrap gap-1.5">
+                      {c?.release && (c.release.ready ? <Badge tone="ok">「{c.release.name}」可评审放行</Badge> : c.release.mustTotal > 0 ? <Badge tone="brand">发「{c.release.name}」还差 {c.release.mustTotal - c.release.mustDone} 项</Badge> : null)}
                       {p.progress.blocked > 0 && <Badge tone="danger">{p.progress.blocked} 阻塞</Badge>}
                       {p.progress.overdue > 0 && <Badge tone="warn">{p.progress.overdue} 逾期</Badge>}
-                      {p.dueAt && <Badge>{fmtDate(p.dueAt)} 截止</Badge>}
-                      {!p.progress.blocked && !p.progress.overdue && p.progress.total > 0 && <Badge tone="ok">进展正常</Badge>}
+                      {c && c.waiting > 0 && <Badge tone="warn">{c.waiting} 等前置</Badge>}
+                      {c?.updateMissing && c.phases.length > 0 && <Badge>该发进展了</Badge>}
                       {p.progress.total === 0 && <Badge>暂无任务</Badge>}
                     </div>
                   </CardContent>
                 </Card>
               </Link>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -106,6 +127,8 @@ export default async function Dashboard() {
         </section>
       </div>
 
+      <PortfolioTimeline rows={active.map((p) => ({ id: p.id, name: p.name, phases: cards.get(p.id)?.phases ?? [] })).filter((r) => r.phases.some((x) => x.startAt || x.dueAt))} />
+
       <section className="mt-8">
         <h2 className="mb-2.5 text-sm font-semibold text-[var(--color-muted)]">最近会议</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -124,6 +147,43 @@ export default async function Dashboard() {
         </div>
       </section>
     </div>
+  );
+}
+
+/** 全部项目的阶段时间线（纯 CSS，不加载图表库）：今天为竖线，前 2 周到后 12 周 */
+function PortfolioTimeline({ rows }: { rows: Array<{ id: string; name: string; phases: Array<{ name: string; status: string; startAt: number | null; dueAt: number | null }> }> }) {
+  if (!rows.length) return null;
+  const DAY = 86400;
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - 14 * DAY, to = now + 84 * DAY;
+  const pos = (t: number) => Math.max(0, Math.min(100, ((t - from) / (to - from)) * 100));
+  const weeks = Array.from({ length: 15 }, (_, i) => from + i * 7 * DAY);
+  return (
+    <section className="mt-8">
+      <h2 className="mb-2.5 text-sm font-semibold text-[var(--color-muted)]">项目时间线（未来 12 周）</h2>
+      <Card><CardContent className="overflow-x-auto p-4">
+        <div className="min-w-[640px]">
+          <div className="relative ml-36 h-5 text-[10px] text-[var(--color-muted)]">
+            {weeks.map((w) => <span key={w} className="absolute -translate-x-1/2" style={{ left: `${pos(w)}%` }}>{new Date(w * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>)}
+          </div>
+          {rows.map((r) => (
+            <div key={r.id} className="flex items-center border-t border-[var(--color-line)] py-1.5">
+              <Link href={`/p/${r.id}?tab=plan`} className="w-36 shrink-0 truncate pr-2 text-[12px] hover:underline">{r.name}</Link>
+              <div className="relative h-6 flex-1 rounded bg-[var(--color-line)]/20">
+                <span className="absolute inset-y-0 w-px bg-[var(--color-danger)]" style={{ left: `${pos(now)}%` }} />
+                {r.phases.filter((ph) => ph.startAt || ph.dueAt).map((ph) => {
+                  const st = ph.startAt ?? (ph.dueAt! - 7 * DAY), en = ph.dueAt ?? (ph.startAt! + 7 * DAY);
+                  if (en < from || st > to) return null;
+                  const left = pos(st), width = Math.max(1.5, pos(en) - left);
+                  const late = ph.dueAt && ph.dueAt < now && !["done", "cancelled"].includes(ph.status);
+                  return <span key={ph.name} title={`${ph.name}：${fmtDate(st)} – ${fmtDate(en)}`} className={`absolute top-1 h-4 truncate rounded px-1 text-[10px] leading-4 text-white ${ph.status === "done" ? "bg-[var(--color-ok)]" : late ? "bg-[var(--color-danger)]" : ph.status === "active" ? "bg-[var(--color-brand)]" : "bg-[var(--color-muted)]/60"}`} style={{ left: `${left}%`, width: `${width}%` }}>{ph.name}</span>;
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent></Card>
+    </section>
   );
 }
 

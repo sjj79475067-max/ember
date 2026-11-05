@@ -14,7 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     unread = countOpen();
   } catch {}
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen flex-col md:flex-row">
       <Sidebar user={{ name: user.name, email: user.email }} unread={unread} />
       <main className="min-w-0 flex-1 pb-14 md:pb-0">{children}</main>
     </div>

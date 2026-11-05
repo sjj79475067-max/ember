@@ -66,6 +66,37 @@ export function refreshReminders() {
   for (const it of suspicious) {
     upsert({ kind: "review", severity: "P1", title: `完成证据待核实：${it.title}`, bodyMd: `证据：「${it.evidence.slice(0, 120)}」。读起来像进度而不是完成结果：确认已做完则补写验收结论；没做完请改回进行中并记录进展。`, projectId: it.projectId, targetId: it.id, dedupeKey: `needs-review:${it.id}:v${it.version}` });
   }
+  // 需求闭环：确认后久未拆解、提出后久未决、agent 放弃待确认
+  const reqs = db.select().from(s.requirements).all();
+  for (const r of reqs) {
+    if (r.status === "dropped" && r.closeConfirmed === 0) {
+      upsert({ kind: "review", severity: "P1", title: `需求放弃待确认：${r.code} ${r.title}`, bodyMd: `理由：${r.closeReason}。确认放弃，或驳回继续做。`, projectId: r.projectId, targetType: "requirement", targetId: r.id, dedupeKey: `req-drop:${r.id}` });
+    }
+    if (r.status === "accepted" && t - r.updatedAt > 7 * DAY) {
+      const n = db.select({ n: sql<number>`count(*)` }).from(s.items).where(eq(s.items.requirementId, r.id)).get()?.n ?? 0;
+      if (!n) upsert({ kind: "review", severity: "P2", title: `需求还没拆成事项：${r.code} ${r.title}`, bodyMd: "已确认要做超过 7 天，但没有任何事项在推进。", projectId: r.projectId, targetType: "requirement", targetId: r.id, dedupeKey: `req-untriaged:${r.id}:${ymdWeek(t)}` });
+    }
+    if (r.status === "proposed" && t - r.createdAt > 14 * DAY) {
+      upsert({ kind: "review", severity: "P2", title: `需求未决：${r.code} ${r.title}`, bodyMd: "提出超过 14 天还没决定做不做。确认要做，或写明原因放弃。", projectId: r.projectId, targetType: "requirement", targetId: r.id, dedupeKey: `req-stale:${r.id}:${ymdWeek(t)}` });
+    }
+  }
+  // 阶段：资质办理周期来不及、阶段过期仍有必过缺口
+  const mss = db.select().from(s.milestones).all().filter((m) => !["done", "cancelled"].includes(m.status) && m.dueAt);
+  for (const m of mss) {
+    const its = db.select().from(s.items).where(eq(s.items.milestoneId, m.id)).all().filter((i) => i.mustMeet === 1 && !["done", "dropped"].includes(i.status));
+    const late = its.filter((i) => i.leadTimeDays && t + i.leadTimeDays * DAY > m.dueAt!);
+    if (late.length) upsert({ kind: "due", severity: "P1", title: `来不及：阶段「${m.name}」的资质办理周期不够`, bodyMd: late.map((i) => `${i.title}（通常要 ${i.leadTimeDays} 天）`).join("；"), projectId: m.projectId, targetType: "milestone", targetId: m.id, dedupeKey: `ms-lead:${m.id}:${ymdWeek(t)}` });
+    if (m.dueAt! < t && its.length) upsert({ kind: "overdue", severity: "P0", title: `阶段「${m.name}」已过截止日，还有 ${its.length} 个必过项`, bodyMd: its.slice(0, 5).map((i) => i.title).join("；"), projectId: m.projectId, targetType: "milestone", targetId: m.id, dedupeKey: `ms-late:${m.id}:${ymd(t)}` });
+  }
+  // 项目更新缺失（健康度过期）
+  for (const p of db.select().from(s.projects).all().filter((x) => x.status === "active" && x.isInbox !== 1)) {
+    const hasStructure = db.select().from(s.milestones).where(eq(s.milestones.projectId, p.id)).get();
+    if (!hasStructure) continue;
+    const last = db.select().from(s.projectUpdates).where(eq(s.projectUpdates.projectId, p.id)).all().reduce((m, u) => Math.max(m, u.createdAt), 0);
+    if (t - (last || p.createdAt) > (p.updateEveryDays || 7) * DAY) {
+      upsert({ kind: "review", severity: "P2", title: `项目该发进展了：${p.name}`, bodyMd: `超过 ${p.updateEveryDays || 7} 天没有进展更新。写三句：进展、阻塞、下一步。`, projectId: p.id, targetType: "project", targetId: p.id, dedupeKey: `pu-missing:${p.id}:${ymdWeek(t)}` });
+    }
+  }
   // 收件箱积压
   const inbox = db.select().from(s.projects).where(eq(s.projects.isInbox, 1)).get();
   if (inbox) {

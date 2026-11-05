@@ -4,6 +4,11 @@ import type { Ctx } from "@/lib/http/api";
 import { listProjects, getProject, createProject, updateProject, resolveProjectOrNull, getInbox } from "@/lib/services/projects";
 import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor, moveItem, mergeItems, addProgress, supersedeItem, findDuplicates } from "@/lib/services/items";
 import { moveFile } from "@/lib/services/files";
+import { listMilestones, saveMilestone, getMilestone } from "@/lib/services/milestones";
+import { listRequirements, saveRequirement, getRequirement } from "@/lib/services/requirements";
+import { addDep, removeDep } from "@/lib/services/deps";
+import { projectBoard, postProjectUpdate, ITEM_KINDS } from "@/lib/services/board";
+import { listTemplates, applyTemplate } from "@/lib/services/templates";
 import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
 import { createMeeting, getMeeting, listMeetings, linkItemToMeeting, saveMeetingItemsSnapshot, previewMeetingItems } from "@/lib/services/meetings";
 import { ingest } from "@/lib/services/ingest";
@@ -67,6 +72,28 @@ function gate(ctx: Ctx, projectId: string | null | undefined, tool: string) {
   );
 }
 
+const kindEnum = z.enum(ITEM_KINDS as [string, ...string[]]);
+const KIND_HELP = "事项类型：feature 功能 / task 一般 / compliance 资质合规（备案、认证）/ account 账号开通 / purchase 采购 / contract 合同 / finance 财务 / release 发布 / risk 风险 / doc 文档";
+
+/** 把阶段名/id、需求编号/id 解析成 id；找不到就报错，不静默丢 */
+function resolveStructure(projectId: string, milestone?: string | null, requirement?: string | null) {
+  let milestoneId: string | null | undefined = undefined;
+  let requirementId: string | null | undefined = undefined;
+  if (milestone === null) milestoneId = null;
+  else if (milestone) {
+    const m = getMilestone(milestone, projectId);
+    if (!m || m.projectId !== projectId) throw Object.assign(new Error(`本项目没有阶段「${milestone}」。现有：${listMilestones(projectId).map((x) => x.name).join("、") || "无（可用 milestone_save 或 template_apply 建）"}`), { status: 404 });
+    milestoneId = m.id;
+  }
+  if (requirement === null) requirementId = null;
+  else if (requirement) {
+    const r = getRequirement(requirement, projectId);
+    if (!r || r.projectId !== projectId) throw Object.assign(new Error(`本项目没有需求「${requirement}」`), { status: 404 });
+    requirementId = r.id;
+  }
+  return { milestoneId, requirementId };
+}
+
 export const tools: ToolDef[] = [
   {
     name: "onboard",
@@ -127,11 +154,135 @@ export const tools: ToolDef[] = [
       local_root: z.string().optional().describe("本机资料根目录"),
       github_repo: z.string().optional(),
       id: z.string().optional().describe("传入则更新已有项目"),
+      template: z.string().optional().describe("新建时套用模板：app / miniprogram / saas / client / basic。会预置阶段、资质与配套事项和依赖。可先用 template_apply 不带参数查看"),
     }),
     handler: async (i, ctx) => {
       const input = { key: i.key, name: i.name, kind: i.kind, status: i.status, summaryMd: i.summary_md, dueAt: i.due_at, localRoot: i.local_root, githubRepo: i.github_repo };
       const p = i.id ? updateProject(i.id, input, ctx.actor, ctx.ip) : createProject(input, ctx.actor, ctx.ip);
-      return envelope({ project: { id: p.id, key: p.key, name: p.name, kind: p.kind, status: p.status } });
+      const tpl = !i.id && i.template ? applyTemplate(p.id, i.template, ctx.actor) : null;
+      return envelope({ project: { id: p.id, key: p.key, name: p.name, kind: p.kind, status: p.status }, template: tpl }, tpl ? [`已套用模板「${tpl.name}」：${tpl.milestones} 个阶段、${tpl.items} 个事项、${tpl.deps} 条依赖。用 project_board 查看全貌。`] : []);
+    },
+  },
+  {
+    name: "project_board",
+    title: "项目全貌（阶段 · 能否发版 · 卡在哪）",
+    description:
+      "一次拿到项目的全局判断：当前阶段、各阶段完成度与必过缺口、发版就绪（还差哪几项）、等待链与依赖违约、阻塞/逾期/待核实、需求漏斗（未拆解、待确认放弃）、按类型进度、健康度（含系统建议与原因）。\n" +
+      "汇报进度、决定下一步做什么之前先调它，不要靠翻清单拼凑。",
+    input: z.object({ project: z.string() }),
+    handler: async (i) => {
+      const p = resolveProjectOrNull(i.project);
+      const b = projectBoard(p!.id);
+      const { trend, ...rest } = b;
+      void trend;
+      return envelope(rest, b.release && !b.release.ready ? [`距离「${b.release.name}」可放行还差 ${b.release.mustTotal - b.release.mustDone} 个必过项。`] : []);
+    },
+  },
+  {
+    name: "milestone_save",
+    title: "建/改阶段或发布版本",
+    description:
+      "阶段（kind=phase，如 设计/开发/测试/上线）或发布版本（kind=release，如 v1.0）。传 id 修改。\n" +
+      "阶段门的放行/暂缓/终止只能由用户在网页决定；你可以在 gate_proposal 写建议（依据 project_board 的缺口）。",
+    write: true,
+    input: z.object({
+      project: z.string(), id: z.string().optional(), name: z.string(),
+      kind: z.enum(["phase", "release"]).optional(), goal: z.string().optional(),
+      start_at: iso.nullable().optional(), due_at: iso.nullable().optional(),
+      status: z.enum(["planned", "active", "done", "cancelled"]).optional(),
+      gate_proposal: z.string().optional().describe("你对阶段门的建议：可以放行/建议暂缓，附理由"),
+    }),
+    handler: async (i, ctx) => {
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.id, "milestone_save");
+      if (ctx.isAgent && i.status === "done") throw Object.assign(new Error("阶段完成要经过阶段门：请在 gate_proposal 写建议，由用户在网页放行"), { status: 403 });
+      const m = saveMilestone({ id: i.id, projectId: p!.id, name: i.name, kind: i.kind, goal: i.goal, startAt: i.start_at as never, dueAt: i.due_at as never, status: i.status, gateProposal: i.gate_proposal }, ctx.actor);
+      return envelope({ milestone: m });
+    },
+  },
+  {
+    name: "requirement_save",
+    title: "提需求 / 更新需求状态",
+    description:
+      "需求是「要做成什么」，事项是「具体去做什么」。用户提出的每一个想法/要求都先记成需求，确认要做后再用 checklist_add(requirement=编号) 拆成事项。\n" +
+      "规则：关联事项全部完成后需求会自动关闭；不做了必须 status=dropped 并写 close_reason，你提的放弃需用户确认；有未完成事项时不能标 done。",
+    write: true,
+    input: z.object({
+      project: z.string(), id: z.string().optional().describe("需求 id 或编号 R-001；不传则新建"),
+      title: z.string().optional(), detail_md: z.string().optional(), source: z.string().optional().describe("来源：客户/会议/自己/agent"),
+      priority: z.enum(["P0", "P1", "P2", "P3"]).optional(), milestone: z.string().nullable().optional(),
+      status: z.enum(["proposed", "accepted", "in_progress", "done", "dropped"]).optional(),
+      close_reason: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.id, "requirement_save");
+      const st = resolveStructure(p!.id, i.milestone, undefined);
+      const existing = i.id ? getRequirement(i.id, p!.id) : null;
+      if (i.id && !existing) throw Object.assign(new Error(`本项目没有需求「${i.id}」`), { status: 404 });
+      const r = saveRequirement({ id: existing?.id, projectId: p!.id, title: i.title, detailMd: i.detail_md, source: i.source, priority: i.priority, milestoneId: st.milestoneId, status: i.status, closeReason: i.close_reason }, ctx.actor);
+      const hints: string[] = [];
+      if (r.status === "dropped" && r.closeConfirmed === 0) hints.push("放弃已记录，等待用户在网页确认。");
+      if (r.status === "accepted") hints.push(`下一步：用 checklist_add 拆成事项并带上 requirement="${r.code}"。`);
+      return envelope({ requirement: r }, hints);
+    },
+  },
+  {
+    name: "requirement_list",
+    title: "需求清单与追溯",
+    description: "列出项目需求、每条的关联事项与完成情况；untriaged=true 表示已确认但还没拆出事项。",
+    input: z.object({ project: z.string(), status: z.enum(["proposed", "accepted", "in_progress", "done", "dropped", "open"]).optional() }),
+    handler: async (i) => {
+      const p = resolveProjectOrNull(i.project);
+      let rows = listRequirements(p!.id);
+      if (i.status === "open") rows = rows.filter((r) => !["done", "dropped"].includes(r.status));
+      else if (i.status) rows = rows.filter((r) => r.status === i.status);
+      return envelope({ requirements: rows.map((r) => ({ id: r.id, code: r.code, title: r.title, status: r.status, priority: r.priority, close_reason: r.closeReason || undefined, close_confirmed: r.closeConfirmed === 1, items: r.items, untriaged: r.untriaged })) });
+    },
+  },
+  {
+    name: "item_link",
+    title: "设置事项依赖（谁卡着谁）",
+    description: "blocker 完成后 blocked 才能开始，例如「ICP 备案」卡「正式上线」。action=remove 删除。会做循环检测；可以跨项目。",
+    write: true,
+    input: z.object({ blocker_id: z.string(), blocked_id: z.string(), action: z.enum(["add", "remove"]).optional(), lag_days: z.number().int().optional() }),
+    handler: async (i, ctx) => {
+      const b = db.select().from(s.items).where(eq(s.items.id, i.blocked_id)).get();
+      if (b) gate(ctx, b.projectId, "item_link");
+      if (i.action === "remove") return envelope(removeDep(i.blocker_id, i.blocked_id, ctx.actor));
+      return envelope({ dep: addDep(i.blocker_id, i.blocked_id, ctx.actor, i.lag_days ?? 0) });
+    },
+  },
+  {
+    name: "template_apply",
+    title: "项目模板（查看 / 套用）",
+    description:
+      "不传 template：列出可用模板（App 上架、微信小程序、网站/SaaS、客户交付、通用），含预置的阶段与资质事项。\n" +
+      "传 template：给项目补上模板里的阶段、配套事项（备案、软著、账号、隐私协议…）和依赖；可重复调用，只补缺的。",
+    write: true,
+    input: z.object({ project: z.string().optional(), template: z.string().optional() }),
+    handler: async (i, ctx) => {
+      if (!i.template) return envelope({ templates: listTemplates() });
+      if (!i.project) throw Object.assign(new Error("套用模板需要 project"), { status: 422 });
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.id, "template_apply");
+      const r = applyTemplate(p!.id, i.template, ctx.actor);
+      return envelope(r, [`新增 ${r.milestones} 个阶段、${r.items} 个事项、${r.deps} 条依赖，跳过已存在 ${r.skipped} 项。`]);
+    },
+  },
+  {
+    name: "project_update_post",
+    title: "发项目进展更新（健康度）",
+    description: "定期（默认每 7 天）发一次：health=on_track/at_risk/off_track + 进展 / 阻塞 / 下一步。项目健康度以最近一次更新为准；先看 project_board 的 health.suggested 与 reasons 再判断。",
+    write: true,
+    input: z.object({
+      project: z.string(), health: z.enum(["on_track", "at_risk", "off_track"]),
+      progress_md: z.string().optional(), blockers_md: z.string().optional(), next_md: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.id, "project_update_post");
+      return envelope({ update: postProjectUpdate({ projectId: p!.id, health: i.health, progressMd: i.progress_md, blockersMd: i.blockers_md, nextMd: i.next_md }, ctx.actor) });
     },
   },
   {
@@ -191,16 +342,34 @@ export const tools: ToolDef[] = [
         due_at: iso.optional(),
         parent_id: z.string().optional(),
         group: z.string().optional().describe("分组名（如 交付/内部/外部依赖），不存在会自动创建"),
+        kind: kindEnum.optional().describe(KIND_HELP),
+        milestone: z.string().optional().describe("所属阶段（名称或 id），如 开发、上线"),
+        requirement: z.string().optional().describe("对应需求（编号如 R-003 或 id）——拆解需求时必填，需求才能闭环"),
+        must_meet: z.boolean().optional().describe("是否为该阶段必过项（没完成就不能放行/发版）"),
+        start_at: iso.optional(),
+        lead_time_days: z.number().int().optional().describe("通常需要几天（备案、认证类填）"),
+        blocked_by: z.array(z.string()).optional().describe("前置事项 id：它们完成后本事项才能开始"),
       })).min(1).max(50),
     }),
     handler: async (i, ctx) => {
       const p = i.project ? resolveProjectOrNull(i.project) : getInbox();
       gate(ctx, p!.isInbox ? null : p!.id, "checklist_add");
-      const res = addItems(p!.id, i.items.map((x: Record<string, string>) => ({
-        title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition,
-        priority: x.priority as never, dueAt: x.due_at as never, parentId: x.parent_id, sourceType: "agent" as const,
-        workstreamId: x.group ? ensureGroup(p!.id, x.group).id : null,
-      })), ctx.actor, ctx.ip);
+      const res = addItems(p!.id, i.items.map((x: Record<string, unknown>) => {
+        const st = resolveStructure(p!.id, x.milestone as string | undefined, x.requirement as string | undefined);
+        return {
+          title: x.title as string, detailMd: x.detail_md as string, doneDefinition: x.done_definition as string,
+          priority: x.priority as never, dueAt: x.due_at as never, parentId: x.parent_id as string, sourceType: "agent" as const,
+          workstreamId: x.group ? ensureGroup(p!.id, x.group as string).id : null,
+          kind: x.kind as string | undefined, milestoneId: st.milestoneId, requirementId: st.requirementId,
+          mustMeet: x.must_meet as boolean | undefined, startAt: x.start_at as never, leadTimeDays: x.lead_time_days as never,
+        };
+      }), ctx.actor, ctx.ip);
+      // 依赖：按输入位置对应到最终落库的事项（新建或被合并进的那条）
+      i.items.forEach((x: { blocked_by?: string[] }, idx: number) => {
+        const target = res.byIndex[idx];
+        if (!x.blocked_by?.length || !target) return;
+        for (const b of x.blocked_by) { try { addDep(b, target, ctx.actor); } catch (e) { res.hints.push(`依赖未加：${(e as Error).message}`); } }
+      });
       const hints = [`已写入项目：${p!.key}（${p!.name}）`];
       if (p!.isInbox) hints.push("这些任务在收件箱。确认归属后调用 item_move 分拣到具体项目。");
       else hints.push("建议随后调用 checklist_list 确认已落库。");
@@ -229,6 +398,13 @@ export const tools: ToolDef[] = [
       expected_version: z.number().int().optional(),
       session_id: z.string().optional(),
       group: z.string().nullable().optional().describe("改到某个分组；传 null 移出分组"),
+      kind: kindEnum.optional().describe(KIND_HELP),
+      milestone: z.string().nullable().optional().describe("改到某阶段（名称或 id）；null 移出阶段"),
+      requirement: z.string().nullable().optional().describe("关联到需求（R-003 或 id）；null 取消关联"),
+      must_meet: z.boolean().optional(),
+      start_at: iso.nullable().optional(),
+      lead_time_days: z.number().int().nullable().optional(),
+      done_definition: z.string().optional().describe("完成标准：做到什么程度算完"),
     }),
     handler: async (i, ctx) => {
       const before = db.select().from(s.items).all().find((x) => x.id === i.item_id);
@@ -236,15 +412,19 @@ export const tools: ToolDef[] = [
       if (i.status === "done" && !(i.evidence || i.note)) throw Object.assign(new Error("验收失败：status=done 必须提供 evidence（做了什么、如何验证）"), { status: 422 });
       if (i.status === "blocked" && !i.block_reason) throw Object.assign(new Error("请提供 block_reason 说明卡在哪里、需要谁做什么"), { status: 422 });
       try {
+        const st = before ? resolveStructure(before.projectId, i.milestone, i.requirement) : { milestoneId: undefined, requirementId: undefined };
         let res = updateItem(i.item_id, {
           status: i.status as never, note: i.note, evidence: i.evidence, blockReason: i.block_reason,
           dueAt: i.due_at as never, priority: i.priority as never, expectedVersion: i.expected_version,
+          kind: i.kind, milestoneId: st.milestoneId, requirementId: st.requirementId, mustMeet: i.must_meet,
+          startAt: i.start_at as never, leadTimeDays: i.lead_time_days as never, doneDefinition: i.done_definition,
         }, ctx.actor, i.session_id, ctx.ip);
         if (i.group !== undefined) {
           setItemGroup(i.item_id, i.group);
           res.item = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get()!;
         }
         const hints: string[] = [];
+        if (res.waitingOn?.length) hints.push(`提醒：前置事项还没完成（${res.waitingOn.join("、")}），确认可以并行再继续。`);
         if (res.flag === "evidence_is_progress") {
           hints.push("注意：这条 evidence 读起来是「进行到哪一步」，不是「做到了什么程度」。任务已标记完成但进入「待核实」（needs_review=1）。如果其实没做完，请改回 doing，并用 checklist_progress 记录进展。");
         }

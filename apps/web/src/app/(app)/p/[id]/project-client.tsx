@@ -1,7 +1,12 @@
 "use client";
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import { LayoutDashboard, Target, GanttChartSquare, Network, Columns3, List, Settings2 } from "lucide-react";
+import { BoardOverview, type Board } from "./board-overview";
+import { RequirementsTab, type Req } from "./requirements-tab";
+import { KIND_LABEL as ITEM_KIND_LABEL, HEALTH_LABEL, ITEM_KINDS } from "@/lib/labels";
 import { Plus, Check, Circle, Ban, Shuffle, ChevronDown, ChevronRight, Calendar, Files as FilesIcon, MessageSquare, Scale, ListChecks, History, Link2, Inbox, ArrowRightLeft, Pencil, TrendingUp, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +17,18 @@ import { callTool } from "@/lib/ui-api";
 import { fmtDate, relTime, STATUS_LABEL, KIND_LABEL, daysLeft } from "@/lib/utils";
 import { toast } from "sonner";
 
-type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string; needsReview: number; supersededBy: string };
+type Item = { id: string; position: number; title: string; detailMd: string; doneDefinition: string; status: string; priority: string; dueAt: number | null; evidence: string; blockReason: string; claimedBy: string; sourceType: string; version: number; updatedAt: number; projectId: string; workstreamId: string | null; parkingLot: number | null; sourceProjectKey: string; needsReview: number; supersededBy: string; kind: string; milestoneId: string | null; requirementId: string | null; mustMeet: number; startAt: number | null; leadTimeDays: number | null; createdAt: number; completedAt: number | null };
+type Ms = { id: string; name: string; status: string; kind: string; position: number; startAt: number | null; dueAt: number | null };
+type Plan = {
+  milestones: Ms[]; requirements: Req[];
+  deps: Array<{ blockerId: string; blockedId: string; violated: boolean }>;
+  foreign: Array<{ id: string; title: string; status: string; kind: string }>;
+  updates: Array<{ id: string; health: string; progressMd: string; blockersMd: string; nextMd: string; autoSummary: string; author: string; createdAt: number }>;
+};
+
+const GanttView = dynamic(() => import("@/components/viz/gantt"), { ssr: false, loading: () => <div className="h-[560px] animate-pulse rounded-xl bg-[var(--color-line)]/40" /> });
+const DepGraph = dynamic(() => import("@/components/viz/dep-graph"), { ssr: false, loading: () => <div className="h-[520px] animate-pulse rounded-xl bg-[var(--color-line)]/40" /> });
+const Kanban = dynamic(() => import("@/components/viz/kanban"), { ssr: false, loading: () => <div className="h-64 animate-pulse rounded-xl bg-[var(--color-line)]/40" /> });
 type Ev = { id: string; itemId: string; actorType: string; actorName: string; action: string; fromStatus: string; toStatus: string; note: string; evidence: string; createdAt: number };
 type Data = {
   project: { id: string; key: string; name: string; kind: string; status: string; summaryMd: string; dueAt: number | null; githubRepo: string; localRoot: string; archiveNote: string };
@@ -28,16 +44,24 @@ type Data = {
 };
 
 const TABS = [
+  { id: "overview", label: "总览", icon: LayoutDashboard },
+  { id: "requirements", label: "需求", icon: Target },
   { id: "checklist", label: "清单", icon: ListChecks },
+  { id: "plan", label: "计划", icon: GanttChartSquare },
   { id: "meetings", label: "会议", icon: MessageSquare },
   { id: "files", label: "资料", icon: FilesIcon },
-  { id: "decisions", label: "决定", icon: Scale },
+  { id: "decisions", label: "决定与更新", icon: Scale },
   { id: "activity", label: "动态", icon: History },
 ] as const;
+type TabId = (typeof TABS)[number]["id"];
 
-export function ProjectClient({ data, projects }: { data: Data; projects: Array<{ id: string; key: string; name: string }> }) {
+export function ProjectClient({ data, projects, board, plan, initialTab }: { data: Data; projects: Array<{ id: string; key: string; name: string }>; board: Board; plan: Plan; initialTab?: string }) {
   const router = useRouter();
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("checklist");
+  const [tab, setTabState] = useState<TabId>((TABS.some((t) => t.id === initialTab) ? initialTab : "overview") as TabId);
+  const setTab = (t: string) => {
+    setTabState(t as TabId);
+    const u = new URL(window.location.href); u.searchParams.set("tab", t); window.history.replaceState(null, "", u.toString());
+  };
   const [filter, setFilter] = useState<"open" | "all" | "done">("open");
   const p = data.project;
   const pct = data.progress.total ? Math.round((data.progress.done / data.progress.total) * 100) : 0;
@@ -72,23 +96,93 @@ export function ProjectClient({ data, projects }: { data: Data; projects: Array<
           <div className="w-56">
             <div className="mb-1 flex items-baseline justify-between"><span className="text-2xl font-semibold tabular-nums">{pct}%</span><span className="text-[11px] text-[var(--color-muted)]">{data.progress.done}/{data.progress.total} 完成</span></div>
             <div className="h-2 overflow-hidden rounded-full bg-[var(--color-line)]"><div className="h-full rounded-full bg-gradient-to-r from-[var(--color-brand)] to-[oklch(0.72_0.15_60)] transition-all" style={{ width: `${pct}%` }} /></div>
+            <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-[var(--color-muted)]">
+              <span className={`size-2 rounded-full ${board.health.value === "on_track" ? "bg-[var(--color-ok)]" : board.health.value === "at_risk" ? "bg-[var(--color-warn)]" : "bg-[var(--color-danger)]"}`} />
+              {HEALTH_LABEL[board.health.value].label}{board.current ? ` · 当前：${board.current.name}` : ""}
+            </p>
           </div>
         </div>
       </header>
 
-      <div className="mb-4 flex gap-1 border-b border-[var(--color-line)]">
+      <div className="no-scrollbar mb-4 flex gap-1 overflow-x-auto border-b border-[var(--color-line)]">
         {TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors ${tab === t.id ? "border-[var(--color-brand)] font-medium text-[var(--color-brand)]" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]"}`}>
-            <t.icon className="size-4" />{t.label}{t.id === "meetings" && data.meetings.length > 0 && <span className="text-[11px]">({data.meetings.length})</span>}
+          <button key={t.id} onClick={() => setTab(t.id)} className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors ${tab === t.id ? "border-[var(--color-brand)] font-medium text-[var(--color-brand)]" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]"}`}>
+            <t.icon className="size-4" />{t.label}
+            {t.id === "meetings" && data.meetings.length > 0 && <span className="text-[11px]">({data.meetings.length})</span>}
+            {t.id === "requirements" && (board.funnel.untriaged.length + board.funnel.dropUnconfirmed.length) > 0 && <span className="rounded-full bg-[var(--color-danger)] px-1.5 text-[10px] leading-4 text-white">{board.funnel.untriaged.length + board.funnel.dropUnconfirmed.length}</span>}
           </button>
         ))}
       </div>
 
-      {tab === "checklist" && <Checklist items={items} parked={data.parked} groups={data.groups} projectId={p.id} projects={projects} filter={filter} setFilter={setFilter} onChange={() => router.refresh()} />}
+      {tab === "overview" && <BoardOverview board={board} onOpenTab={setTab} />}
+      {tab === "requirements" && <RequirementsTab projectId={p.id} reqs={plan.requirements} milestones={plan.milestones} />}
+      {tab === "plan" && <PlanTab data={data} plan={plan} />}
+      {tab === "checklist" && <Checklist items={items} allItems={data.items} parked={data.parked} groups={data.groups} projectId={p.id} projects={projects} filter={filter} setFilter={setFilter} onChange={() => router.refresh()} plan={plan} />}
       {tab === "meetings" && <Meetings projectId={p.id} meetings={data.meetings} />}
       {tab === "files" && <Files projectId={p.id} files={data.files} onChange={() => router.refresh()} />}
-      {tab === "decisions" && <Decisions projectId={p.id} decisions={data.decisions} policies={data.policies} />}
+      {tab === "decisions" && <><Updates updates={plan.updates} /><Decisions projectId={p.id} decisions={data.decisions} policies={data.policies} /></>}
       {tab === "activity" && <Activity events={data.events} items={data.items} />}
+    </div>
+  );
+}
+
+function PlanTab({ data, plan }: { data: Data; plan: Plan }) {
+  const [view, setView] = useState<"gantt" | "graph">("gantt");
+  const [scope, setScope] = useState<"linked" | "all">("linked");
+  const items = data.items.filter((i) => i.status !== "dropped");
+  const msName = new Map(plan.milestones.map((m) => [m.id, m.name]));
+  const now = Date.now() / 1000;
+  const linked = new Set(plan.deps.flatMap((d) => [d.blockerId, d.blockedId]));
+  const graphItems = [
+    ...items.filter((i) => scope === "all" || linked.has(i.id)).map((i) => ({ id: i.id, title: i.title, status: i.status, kind: i.kind, milestone: i.milestoneId ? msName.get(i.milestoneId) ?? null : null, mustMeet: i.mustMeet === 1, overdue: !!(i.dueAt && i.dueAt < now && i.status !== "done") })),
+    ...plan.foreign.map((f) => ({ id: f.id, title: f.title, status: f.status, kind: f.kind, milestone: null, mustMeet: false, overdue: false, external: true })),
+  ];
+  const phases = plan.milestones.map((m) => {
+    const its = items.filter((i) => i.milestoneId === m.id);
+    return { id: m.id, name: m.name, startAt: m.startAt, dueAt: m.dueAt, done: its.filter((i) => i.status === "done").length, total: its.length };
+  });
+  const dark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-1 rounded-lg bg-[var(--color-line)]/40 p-0.5 text-xs">
+          <button onClick={() => setView("gantt")} className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${view === "gantt" ? "bg-[var(--color-card)] font-medium shadow-sm" : "text-[var(--color-muted)]"}`}><GanttChartSquare className="size-3.5" />时间线</button>
+          <button onClick={() => setView("graph")} className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${view === "graph" ? "bg-[var(--color-card)] font-medium shadow-sm" : "text-[var(--color-muted)]"}`}><Network className="size-3.5" />依赖图</button>
+        </div>
+        {view === "graph" ? (
+          <div className="flex items-center gap-3 text-[11px] text-[var(--color-muted)]">
+            <label className="flex items-center gap-1"><input type="checkbox" checked={scope === "all"} onChange={(e) => setScope(e.target.checked ? "all" : "linked")} />显示没有依赖的事项</label>
+            <span>★ 必过项 · 橙色 等前置 · 红线 排期冲突 · 虚线框 其他项目</span>
+          </div>
+        ) : <span className="text-[11px] text-[var(--color-muted)]">阶段为汇总行；没填日期的事项标「未排期」，在清单里补上开始/截止日</span>}
+      </div>
+      {view === "gantt"
+        ? <GanttView phases={phases} items={items.map((i) => ({ id: i.id, title: i.title, milestoneId: i.milestoneId, startAt: i.startAt, dueAt: i.dueAt, createdAt: i.createdAt, completedAt: i.completedAt, status: i.status, leadTimeDays: i.leadTimeDays }))} deps={plan.deps} dark={dark} />
+        : <DepGraph items={graphItems} deps={plan.deps} />}
+    </div>
+  );
+}
+
+function Updates({ updates }: { updates: Plan["updates"] }) {
+  if (!updates.length) return <p className="mb-4 rounded-xl border border-dashed border-[var(--color-line)] p-4 text-[12px] text-[var(--color-muted)]">还没有项目进展更新。在「总览」点「发进展」，或让 agent 每周用 project_update_post 发一次。</p>;
+  return (
+    <div className="mb-5">
+      <h3 className="mb-2 text-sm font-semibold text-[var(--color-muted)]">进展更新</h3>
+      <div className="relative ml-2 border-l border-[var(--color-line)] pl-5">
+        {updates.map((u) => {
+          const h = HEALTH_LABEL[u.health];
+          return (
+            <div key={u.id} className="relative pb-4">
+              <span className={`absolute -left-[26px] top-1.5 size-2.5 rounded-full border-2 border-[var(--color-bg)] ${h?.tone === "ok" ? "bg-[var(--color-ok)]" : h?.tone === "warn" ? "bg-[var(--color-warn)]" : "bg-[var(--color-danger)]"}`} />
+              <p className="text-[13px]"><span className="font-medium">{h?.label}</span> <span className="text-[var(--color-muted)]">· {u.author} · {relTime(u.createdAt)}</span></p>
+              {u.progressMd && <p className="mt-0.5 whitespace-pre-wrap text-[12px]"><span className="text-[var(--color-muted)]">进展：</span>{u.progressMd}</p>}
+              {u.blockersMd && <p className="mt-0.5 whitespace-pre-wrap text-[12px]"><span className="text-[var(--color-muted)]">阻塞：</span>{u.blockersMd}</p>}
+              {u.nextMd && <p className="mt-0.5 whitespace-pre-wrap text-[12px]"><span className="text-[var(--color-muted)]">下一步：</span>{u.nextMd}</p>}
+              {u.autoSummary && <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">系统记录：{u.autoSummary}</p>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -96,8 +190,17 @@ export function ProjectClient({ data, projects }: { data: Data; projects: Array<
 type GroupInfo = { groups: Array<{ id: string; name: string; stat: { total: number; done: number } }>; ungrouped: { total: number; done: number } };
 type ProjOpt = { id: string; key: string; name: string };
 
-function Checklist({ items, parked, groups, projectId, projects, filter, setFilter, onChange }: { items: Item[]; parked: Item[]; groups: GroupInfo; projectId: string; projects: ProjOpt[]; filter: string; setFilter: (f: "open" | "all" | "done") => void; onChange: () => void }) {
+function Checklist({ items, allItems, parked, groups, projectId, projects, filter, setFilter, onChange, plan }: { items: Item[]; allItems: Item[]; parked: Item[]; groups: GroupInfo; projectId: string; projects: ProjOpt[]; filter: string; setFilter: (f: "open" | "all" | "done") => void; onChange: () => void; plan: Plan }) {
   const [adding, setAdding] = useState(false);
+  const hasPhases = plan.milestones.length > 0;
+  const [view, setView] = useState<"list" | "board">("list");
+  const [groupBy, setGroupBy] = useState<"phase" | "group">(hasPhases ? "phase" : "group");
+  const [editing, setEditing] = useState<Item | null>(null);
+  const [bulkMs, setBulkMs] = useState("");
+  const [bulkKind, setBulkKind] = useState("task");
+  const waitingSet = new Set(plan.deps.filter((d) => { const b = [...items, ...parked].find((x) => x.id === d.blockerId) ?? plan.foreign.find((f) => f.id === d.blockerId); return b && !["done", "dropped"].includes(b.status); }).map((d) => d.blockedId));
+  const reqCode = new Map(plan.requirements.map((r) => [r.id, r.code]));
+  const msName = new Map(plan.milestones.map((m) => [m.id, m.name]));
   const [bulk, setBulk] = useState("");
   const [bulkGroup, setBulkGroup] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -181,7 +284,7 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
   async function add() {
     const lines = bulk.split("\n").map((l) => l.replace(/^[-*\d.\s]+/, "").trim()).filter(Boolean);
     if (!lines.length) return;
-    const r = await callTool("checklist_add", { project: projectId, items: lines.map((t) => ({ title: t, group: bulkGroup || undefined })) });
+    const r = await callTool("checklist_add", { project: projectId, items: lines.map((t) => ({ title: t, group: bulkGroup || undefined, milestone: bulkMs || undefined, kind: bulkKind })) });
     if (!r.ok) return toast.error(r.error ?? "添加失败");
     toast.success(`已添加 ${lines.length} 条`); setBulk(""); setAdding(false); onChange();
   }
@@ -198,18 +301,49 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
     saveGroups([...groups.groups.map((g) => g.name), name.trim()]);
   }
 
-  // 按分组切段；未分组放最后
-  const byGroup = new Map<string, Item[]>();
-  for (const it of items) {
-    const k = it.workstreamId ?? "";
-    const arr = byGroup.get(k) ?? [];
-    arr.push(it);
-    byGroup.set(k, arr);
+  async function moveStatus(it: { id: string; title: string; version: number }, to: string) {
+    let body: Record<string, unknown> = { item_id: it.id, status: to, expected_version: it.version };
+    if (to === "done") {
+      const ev = window.prompt(`完成「${it.title}」\n\n请写下完成证据（做了什么 / 在哪验证 / 链接或路径）：`, "");
+      if (!ev?.trim()) { toast.error("必须写完成证据"); return false; }
+      body = { ...body, evidence: ev.trim() };
+    }
+    if (to === "blocked") {
+      const reason = window.prompt("阻塞原因（需要谁做什么）：", "");
+      if (!reason?.trim()) return false;
+      body = { ...body, block_reason: reason.trim() };
+    }
+    if (to === "changed") {
+      const note = window.prompt("变更说明（哪些部分做了调整）：", "");
+      if (!note?.trim()) return false;
+      body = { ...body, note: note.trim(), evidence: note.trim() };
+    }
+    const r = await callTool("checklist_update", body);
+    if (!r.ok) { toast.error(r.error ?? "失败"); return false; }
+    onChange(); return true;
   }
-  const sections: Array<{ id: string; name: string; stat: { total: number; done: number }; list: Item[] }> = groups.groups.map((g) => ({ id: g.id, name: g.name, stat: g.stat, list: byGroup.get(g.id) ?? [] }));
-  const ungrouped = byGroup.get("") ?? [];
-  if (ungrouped.length) sections.push({ id: "", name: "未分组", stat: groups.ungrouped, list: ungrouped });
+
+  // 有阶段时默认按阶段切段（和总览、甘特一致）；也可切回自定义分组
   const grouped = groups.groups.length > 0;
+  let sections: Array<{ id: string; name: string; stat: { total: number; done: number }; list: Item[] }> = [];
+  if (groupBy === "phase" && hasPhases) {
+    sections = plan.milestones.map((m) => {
+      const all = data_all(m.id);
+      return { id: `ms:${m.id}`, name: m.name, stat: { total: all.length, done: all.filter((i) => i.status === "done").length }, list: items.filter((i) => i.milestoneId === m.id) };
+    });
+    const loose = items.filter((i) => !i.milestoneId);
+    if (loose.length) sections.push({ id: "ms:none", name: "未分阶段", stat: { total: loose.length, done: loose.filter((i) => i.status === "done").length }, list: loose });
+  } else {
+    const byGroup = new Map<string, Item[]>();
+    for (const it of items) {
+      const k = it.workstreamId ?? "";
+      byGroup.set(k, [...(byGroup.get(k) ?? []), it]);
+    }
+    sections = groups.groups.map((g) => ({ id: g.id, name: g.name, stat: g.stat, list: byGroup.get(g.id) ?? [] }));
+    const ungrouped = byGroup.get("") ?? [];
+    if (ungrouped.length) sections.push({ id: "", name: grouped ? "未分组" : "全部事项", stat: groups.ungrouped, list: ungrouped });
+  }
+  function data_all(msId: string) { return [...items, ...parked].filter((i) => i.milestoneId === msId && i.status !== "dropped"); }
 
   function Row({ it }: { it: Item }) {
     const d = daysLeft(it.dueAt);
@@ -219,11 +353,22 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
           {it.status === "done" ? <Check className="size-5 rounded-full bg-[var(--color-ok)] p-0.5 text-white" /> : it.status === "blocked" ? <Ban className="size-5 text-[var(--color-danger)]" /> : <Circle className="size-5 text-[var(--color-line)] group-hover:text-[var(--color-brand)]" />}
         </button>
         <div className="min-w-0 flex-1">
-          <p className={`text-sm ${it.status === "done" ? "text-[var(--color-muted)] line-through" : "font-medium"}`}>{it.title}</p>
+          <p className={`text-sm ${it.status === "done" ? "text-[var(--color-muted)] line-through" : "font-medium"}`}>{it.mustMeet === 1 && <span title="阶段必过项" className="mr-1 text-[var(--color-brand)]">★</span>}{it.title}</p>
           {it.doneDefinition && it.status !== "done" && <p className="mt-0.5 text-[12px] text-[var(--color-muted)]">完成标准：{it.doneDefinition}</p>}
           {it.status === "blocked" && it.blockReason && <p className="mt-0.5 text-[12px] text-[var(--color-danger)]">阻塞：{it.blockReason}</p>}
           {it.evidence && <p className="mt-0.5 line-clamp-1 text-[12px] text-[var(--color-muted)]">证据：{it.evidence}</p>}
-          {it.detailMd && <details className="mt-1 text-[12px] text-[var(--color-muted)]"><summary className="cursor-pointer select-none">进展记录（{(it.detailMd.match(/【/g) ?? []).length} 条）</summary><div className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap border-l-2 border-[var(--color-line)] pl-2">{it.detailMd}</div></details>}
+          {(() => {
+            if (!it.detailMd) return null;
+            // 说明文字（模板/人工写的）与带时间戳的进展记录分开显示
+            const idx = it.detailMd.indexOf("【");
+            const note = (idx < 0 ? it.detailMd : it.detailMd.slice(0, idx)).trim();
+            const log = idx < 0 ? "" : it.detailMd.slice(idx);
+            const n = (log.match(/【/g) ?? []).length;
+            return <>
+              {note && <p className="mt-0.5 line-clamp-2 text-[12px] text-[var(--color-muted)]" title={note}>说明：{note}</p>}
+              {n > 0 && <details className="mt-1 text-[12px] text-[var(--color-muted)]"><summary className="cursor-pointer select-none">进展记录（{n} 条）</summary><div className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap border-l-2 border-[var(--color-line)] pl-2">{log}</div></details>}
+            </>;
+          })()}
           {it.needsReview === 1 && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-[var(--color-warn)]/10 px-2 py-1 text-[12px]">
               <span className="font-medium text-[var(--color-warn)]">证据像进度，不是完成结果</span>
@@ -233,13 +378,17 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
           )}
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <StatusBadge status={it.status} />
+            {it.kind && it.kind !== "task" && <Badge>{ITEM_KIND_LABEL[it.kind] ?? it.kind}</Badge>}
+            {groupBy !== "phase" && it.milestoneId && <Badge>{msName.get(it.milestoneId)}</Badge>}
+            {it.requirementId && <Badge tone="brand">{reqCode.get(it.requirementId)}</Badge>}
+            {waitingSet.has(it.id) && !["done", "dropped"].includes(it.status) && <Badge tone="warn"><Link2 className="size-3" />等前置</Badge>}
+            {it.leadTimeDays ? <span className="text-[11px] text-[var(--color-muted)]">通常 {it.leadTimeDays} 天</span> : null}
             {it.priority !== "P1" && <Badge tone={it.priority === "P0" ? "danger" : "default"}>{it.priority}</Badge>}
             {it.dueAt && <Badge tone={d! < 0 ? "danger" : d! <= 2 ? "warn" : "default"}><Calendar className="size-3" />{fmtDate(it.dueAt)}{d! < 0 ? ` 逾期${-d!}天` : ""}</Badge>}
             {it.claimedBy && <Badge tone="brand">认领中</Badge>}
             {it.supersededBy && <Badge tone="warn">已被新版取代</Badge>}
             {it.sourceType === "meeting" && <Badge>来自会议</Badge>}
             {it.sourceProjectKey && <Badge>来自 {it.sourceProjectKey}</Badge>}
-            {it.detailMd && <span className="text-[11px] text-[var(--color-muted)]">{it.detailMd}</span>}
           </div>
         </div>
         <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -247,7 +396,8 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
           <IconBtn title="记录变更" onClick={() => change(it)}><Shuffle /></IconBtn>
           <IconBtn title="记录进展（不新建任务）" onClick={() => progress(it)}><TrendingUp /></IconBtn>
           <IconBtn title="需求变了：升级为新版本" onClick={() => supersede(it)}><GitBranch /></IconBtn>
-          {grouped && <GroupMenu item={it} groups={groups.groups} onPick={(n) => setGroup(it, n)} />}
+          <IconBtn title="类型 / 阶段 / 需求 / 依赖 / 日期" onClick={() => setEditing(it)}><Settings2 /></IconBtn>
+          {grouped && groupBy === "group" && <GroupMenu item={it} groups={groups.groups} onPick={(n) => setGroup(it, n)} />}
           <MoveMenu projects={projects.filter((p) => p.id !== projectId)} onPick={(pid) => move(it, pid)} />
         </div>
       </div>
@@ -257,16 +407,27 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-1 rounded-lg bg-[var(--color-line)]/40 p-0.5 text-xs">
+        <div className={`flex gap-1 rounded-lg bg-[var(--color-line)]/40 p-0.5 text-xs ${view === "board" ? "invisible" : ""}`}>
           {([["open", "未完成"], ["all", "全部"], ["done", "已完成"]] as const).map(([k, l]) => (
             <button key={k} onClick={() => setFilter(k)} className={`rounded-md px-2.5 py-1 transition-colors ${filter === k ? "bg-[var(--color-card)] font-medium shadow-sm" : "text-[var(--color-muted)]"}`}>{l}</button>
           ))}
         </div>
-        <div className="flex gap-1.5">
-          <Button size="sm" variant="ghost" onClick={newGroup}><Plus /> 分组</Button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex gap-0.5 rounded-lg bg-[var(--color-line)]/40 p-0.5 text-xs">
+            <button onClick={() => setView("list")} title="列表" className={`rounded-md px-2 py-1 ${view === "list" ? "bg-[var(--color-card)] shadow-sm" : "text-[var(--color-muted)]"}`}><List className="size-3.5" /></button>
+            <button onClick={() => setView("board")} title="看板" className={`rounded-md px-2 py-1 ${view === "board" ? "bg-[var(--color-card)] shadow-sm" : "text-[var(--color-muted)]"}`}><Columns3 className="size-3.5" /></button>
+          </div>
+          {view === "list" && hasPhases && (
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as "phase" | "group")} className="h-8 rounded-lg border border-[var(--color-line)] bg-[var(--color-card)] px-2 text-xs">
+              <option value="phase">按阶段</option><option value="group">按分组</option>
+            </select>
+          )}
+          {groupBy === "group" && <Button size="sm" variant="ghost" onClick={newGroup}><Plus /> 分组</Button>}
           <Button size="sm" onClick={() => setAdding(true)}><Plus /> 添加任务</Button>
         </div>
       </div>
+
+      {view === "board" && <Kanban items={allItems.filter((i) => i.status !== "dropped").map((i) => ({ id: i.id, title: i.title, status: i.status, kind: i.kind, priority: i.priority, dueAt: i.dueAt, claimedBy: i.claimedBy, version: i.version, mustMeet: i.mustMeet, waiting: waitingSet.has(i.id), needsReview: i.needsReview }))} onMove={moveStatus} />}
 
       {parked.length > 0 && (
         <div className="mb-3 rounded-xl border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/5">
@@ -280,9 +441,9 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
         </div>
       )}
 
-      {items.length === 0 && <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-card)] p-8 text-center text-sm text-[var(--color-muted)]">没有任务。可以导入会议记录自动生成，或手动添加。</div>}
+      {view === "list" && items.length === 0 && <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-card)] p-8 text-center text-sm text-[var(--color-muted)]">没有任务。可以导入会议记录自动生成，或手动添加。</div>}
 
-      {sections.map((sec) => {
+      {view === "list" && sections.map((sec) => {
         const isCollapsed = collapsed[sec.id];
         const pct = sec.stat.total ? Math.round((sec.stat.done / sec.stat.total) * 100) : 0;
         return (
@@ -302,7 +463,15 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
         <DialogContent>
           <DialogHeader><DialogTitle>添加任务</DialogTitle><DialogDescription>每行一条，可直接粘贴清单。</DialogDescription></DialogHeader>
           <Textarea rows={8} value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"完成登录模块改造\n接入数据看板\n交付前全量回归"} />
-          {grouped && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">类型</span>
+              <select value={bulkKind} onChange={(e) => setBulkKind(e.target.value)} className="h-9 rounded-lg border border-[var(--color-line)] bg-[var(--color-card)] px-2 text-sm">{ITEM_KINDS.map((k) => <option key={k} value={k}>{ITEM_KIND_LABEL[k]}</option>)}</select>
+            </label>
+            {hasPhases && <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">阶段</span>
+              <select value={bulkMs} onChange={(e) => setBulkMs(e.target.value)} className="h-9 rounded-lg border border-[var(--color-line)] bg-[var(--color-card)] px-2 text-sm"><option value="">不指定</option>{plan.milestones.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}</select>
+            </label>}
+          </div>
+          {grouped && groupBy === "group" && (
             <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">加入分组（可选）</span>
               <select value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)} className="h-9 rounded-lg border border-[var(--color-line)] bg-[var(--color-card)] px-2 text-sm">
                 <option value="">未分组</option>{groups.groups.map((g) => <option key={g.id} value={g.name}>{g.name}</option>)}
@@ -312,7 +481,72 @@ function Checklist({ items, parked, groups, projectId, projects, filter, setFilt
           <DialogFooter><Button variant="ghost" onClick={() => setAdding(false)}>取消</Button><Button onClick={add}>添加</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      {editing && <ItemSettings item={editing} plan={plan} all={[...items, ...parked]} onClose={() => setEditing(null)} onDone={() => { setEditing(null); onChange(); }} />}
     </div>
+  );
+}
+
+function ItemSettings({ item, plan, all, onClose, onDone }: { item: Item; plan: Plan; all: Item[]; onClose: () => void; onDone: () => void }) {
+  const toDate = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "");
+  const fromDate = (v: string) => (v ? Math.floor(new Date(v + "T18:00:00").getTime() / 1000) : null);
+  const [f, setF] = useState({
+    kind: item.kind || "task", milestone: item.milestoneId ? plan.milestones.find((m) => m.id === item.milestoneId)?.name ?? "" : "",
+    requirement: item.requirementId ? plan.requirements.find((r) => r.id === item.requirementId)?.code ?? "" : "",
+    must: item.mustMeet === 1, start: toDate(item.startAt), due: toDate(item.dueAt), lead: item.leadTimeDays ? String(item.leadTimeDays) : "",
+    doneDef: item.doneDefinition,
+  });
+  const blockers = plan.deps.filter((d) => d.blockedId === item.id).map((d) => d.blockerId);
+  const [newBlocker, setNewBlocker] = useState("");
+  async function save() {
+    const r = await callTool("checklist_update", {
+      item_id: item.id, kind: f.kind, milestone: f.milestone || null, requirement: f.requirement || null, must_meet: f.must,
+      start_at: fromDate(f.start), due_at: fromDate(f.due), lead_time_days: f.lead ? Number(f.lead) : null,
+      done_definition: f.doneDef,
+    });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    if (newBlocker) {
+      const l = await callTool("item_link", { blocker_id: newBlocker, blocked_id: item.id });
+      if (!l.ok) return toast.error(l.error ?? "依赖未加");
+    }
+    toast.success("已保存"); onDone();
+  }
+  async function unlink(b: string) {
+    const r = await callTool("item_link", { blocker_id: b, blocked_id: item.id, action: "remove" });
+    if (!r.ok) return toast.error(r.error ?? "失败");
+    toast.success("已移除依赖"); onDone();
+  }
+  const sel = "h-9 rounded-lg border border-[var(--color-line)] bg-[var(--color-card)] px-2 text-sm";
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader><DialogTitle className="line-clamp-2">{item.title}</DialogTitle><DialogDescription>类型、阶段、需求、日期和前置事项。必过项没完成时，阶段不能放行。</DialogDescription></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">类型</span><select className={sel} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}>{ITEM_KINDS.map((k) => <option key={k} value={k}>{ITEM_KIND_LABEL[k]}</option>)}</select></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">阶段</span><select className={sel} value={f.milestone} onChange={(e) => setF({ ...f, milestone: e.target.value })}><option value="">不指定</option>{plan.milestones.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}</select></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">对应需求</span><select className={sel} value={f.requirement} onChange={(e) => setF({ ...f, requirement: e.target.value })}><option value="">不关联</option>{plan.requirements.filter((r) => r.status !== "dropped").map((r) => <option key={r.id} value={r.code}>{r.code} {r.title.slice(0, 18)}</option>)}</select></label>
+          <label className="flex items-center gap-2 pt-5 text-sm"><input type="checkbox" checked={f.must} onChange={(e) => setF({ ...f, must: e.target.checked })} />阶段必过项</label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">开始</span><Input type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">截止</span><Input type="date" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></label>
+          <label className="col-span-2 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">完成标准（做到什么程度算完）</span><Input value={f.doneDef} onChange={(e) => setF({ ...f, doneDef: e.target.value })} placeholder="如：拿到备案号并登记到资料" /></label>
+          <label className="col-span-2 flex flex-col gap-1"><span className="text-xs text-[var(--color-muted)]">通常需要几天（备案、认证、采购到货等）</span><Input type="number" min={0} value={f.lead} onChange={(e) => setF({ ...f, lead: e.target.value })} placeholder="如 20" /></label>
+        </div>
+        <div>
+          <p className="mb-1 text-xs text-[var(--color-muted)]">前置事项（它们完成后才能开始这件事）</p>
+          <div className="flex flex-wrap gap-1.5">
+            {blockers.length === 0 && <span className="text-[12px] text-[var(--color-muted)]">无</span>}
+            {blockers.map((b) => {
+              const t = all.find((x) => x.id === b)?.title ?? plan.foreign.find((x) => x.id === b)?.title ?? b;
+              return <span key={b} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-line)]/50 px-2 py-0.5 text-[12px]">{t}<button onClick={() => unlink(b)} className="text-[var(--color-muted)] hover:text-[var(--color-danger)]">×</button></span>;
+            })}
+          </div>
+          <select className={`${sel} mt-2 w-full`} value={newBlocker} onChange={(e) => setNewBlocker(e.target.value)}>
+            <option value="">+ 添加前置事项…</option>
+            {all.filter((x) => x.id !== item.id && !blockers.includes(x.id) && x.status !== "dropped").map((x) => <option key={x.id} value={x.id}>{x.title.slice(0, 40)}</option>)}
+          </select>
+        </div>
+        <DialogFooter><Button variant="ghost" onClick={onClose}>取消</Button><Button onClick={save}>保存</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

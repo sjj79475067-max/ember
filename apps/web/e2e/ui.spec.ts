@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-const BASE = process.env.BASE_URL ?? "http://localhost:3000";
+// 默认指向开发测试实例（3100），不要对正式实例（3000）跑
+const BASE = process.env.BASE_URL ?? "http://localhost:3100";
 const EMAIL = process.env.ADMIN_EMAIL ?? "me@example.com";
 const PASS = process.env.ADMIN_PASS ?? "ember12345";
 
@@ -52,4 +53,32 @@ test("深色模式与移动端无横向滚动", async ({ page }) => {
   await page.goto(`${BASE}/projects`);
   const w = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(w).toBeLessThanOrEqual(400);
+});
+
+test("项目看板：总览、需求、计划、看板可用，手机宽度不挤压", async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByPlaceholder("you@example.com").fill(EMAIL);
+  await page.locator('input[type="password"]').fill(PASS);
+  await page.getByRole("button", { name: /登录|创建并进入/ }).click();
+  await page.waitForURL(`${BASE}/`);
+  const key = "E2E" + Date.now().toString().slice(-5);
+  const r = await page.request.post(`${BASE}/api/v1/call/project_create`, { data: { key, name: "看板测试", template: "app" } });
+  const id = (await r.json()).data.project.id;
+  await page.goto(`${BASE}/p/${id}`);
+  await expect(page.getByText("能不能发「上线」")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText("ICP 备案").first()).toBeVisible();
+  await page.goto(`${BASE}/p/${id}?tab=requirements`);
+  await expect(page.getByText("提了就要有着落")).toBeVisible();
+  await page.goto(`${BASE}/p/${id}?tab=plan`);
+  await page.getByRole("button", { name: "依赖图" }).click();
+  await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 20000 });
+  await page.goto(`${BASE}/p/${id}?tab=checklist`);
+  await page.getByTitle("看板").click();
+  await expect(page.getByText("进行中").first()).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/p/${id}`);
+  await expect(page.getByText("能不能发「上线」")).toBeVisible({ timeout: 20000 });
+  const w = await page.evaluate(() => [document.documentElement.scrollWidth, document.querySelector("main")!.getBoundingClientRect().width]);
+  expect(w[0]).toBeLessThanOrEqual(392);
+  expect(w[1]).toBeGreaterThan(380); // 主内容占满屏宽，不被顶栏挤成一条
 });

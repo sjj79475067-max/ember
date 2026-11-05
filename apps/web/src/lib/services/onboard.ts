@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { listProjects, getInbox } from "./projects";
 import { pullReminders, countOpen } from "./reminders";
 import { listPolicies } from "./policies";
+import { portfolioCards } from "./board";
 
 export function agentOnboard(agent: { name: string; sessionId: string }) {
   const projects = listProjects({});
@@ -20,10 +21,19 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
   const suspiciousDone = db.select().from(s.items).where(eq(s.items.needsReview, 1)).all().slice(0, 10);
   return {
     you: { agent_name: agent.name, session_id: agent.sessionId },
-    projects: projects.filter((p) => p.status === "active").map((p) => ({
-      id: p.id, key: p.key, name: p.name, kind: p.kind,
-      progress: p.progress, due_at: p.dueAt, github: p.githubRepo || undefined,
-    })),
+    projects: (() => {
+      const cards = new Map((portfolioCards() as Array<{ id: string; health: string; current: string | null; release: { name: string; mustDone: number; mustTotal: number; ready: boolean } | null; waiting: number }>).map((c) => [c.id, c]));
+      return projects.filter((p) => p.status === "active").map((p) => {
+        const c = cards.get(p.id);
+        return {
+          id: p.id, key: p.key, name: p.name, kind: p.kind,
+          progress: p.progress, due_at: p.dueAt, github: p.githubRepo || undefined,
+          health: c?.health, current_phase: c?.current ?? undefined,
+          release: c?.release ? `${c.release.name} 必过 ${c.release.mustDone}/${c.release.mustTotal}${c.release.ready ? "，可放行" : ""}` : undefined,
+          waiting: c?.waiting || undefined,
+        };
+      });
+    })(),
     inbox: {
       project_key: inbox.key,
       pending: inboxRows.length,
@@ -47,7 +57,9 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
 const WORKFLOW = [
   "1. 读条例：若有必读未确认条例，先 policy_read，再 policy_ack，否则写操作会被门禁拦截。",
   "2. 定项目：从 projects 里按 key/name 匹配；没有就 project_create。无法判断归属时：任务用 checklist_add 省略 project（进收件箱），会议/历史用 meeting_import/ingest_history 省略 project，不要猜着写进某个项目。",
-  "3. 看清单：checklist_list(project, status='open')，不要凭记忆假设。项目分类多时用 group 过滤；分组用 project_groups 设置。",
+  "3. 看全貌：project_board(project) 一次拿到当前阶段、能不能发版、缺哪几项、谁卡着谁、需求漏斗；再用 checklist_list(project, status='open') 看具体事项。不要凭记忆假设。",
+  "3b. 需求闭环：用户提出的每个要求先 requirement_save 记成需求；确认要做后 checklist_add 拆事项时带 requirement=编号。不做了就 status=dropped 并写 close_reason（需用户确认）。不允许有需求悄悄消失。",
+  "3c. 结构：新项目用 project_create(template=app/miniprogram/saas/client/basic) 自动建好阶段和备案、软著、账号、隐私协议等配套事项；老项目用 template_apply 补。新事项写 kind（资质/账号/采购/合同…）、milestone、must_meet；有先后关系用 item_link 或 blocked_by。",
   "4. 开工：claim_item 认领（会显示他人认领情况），着手做；记得每 30 分钟 sync 一次心跳。",
   "5. 记录：会议由 meeting_import 归档并自动抽取事务；决定用 decision_record；零散知识用 note_save。",
   "6. 核销：完成后 checklist_update status='done' 必须带 evidence（做了什么、在哪验证、链接/路径）。证据要说清【做到什么程度】——只写「已对接」「在推进」「完成一半」会被判定为进度而不是完成，任务进入待核实。",
@@ -58,4 +70,5 @@ const WORKFLOW = [
   "9. 提醒：工具返回值里 reminders_unread 有未读提醒，先处理 P0。",
   "10. 分拣：inbox.pending > 0 时，看 inbox.items，确认归属后 item_move 分拣；分不清就保持原样并在会话总结里说明。",
   "11. 条例：你只能 policy_write 提议条例（进入待批准），由用户在网页批准；不要试图修改或废止条例。",
+  "12. 阶段门：阶段放行只能由用户在网页决定。你判断可以放行时，用 milestone_save 的 gate_proposal 写建议和依据。每周用 project_update_post 发一次进展（进展/阻塞/下一步 + 健康度）。",
 ].join("\n");
