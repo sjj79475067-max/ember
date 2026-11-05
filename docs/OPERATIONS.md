@@ -55,6 +55,17 @@ docker compose down && tar xzf ember-2026-11-05.tgz -C /path/to/volume && docker
    ```
    `CRON_KEY` 在 `.env` 中，容器启动时注入；未设置则该入口直接 401。
 
+## 随手记：飞书 / 快捷指令 / 语音
+
+都在「设置 → 随手记」里配，页面上有分步说明。要点：
+
+- **飞书**：开放平台建企业自建应用 → 加机器人 → 权限开「接收单聊消息、读取单聊消息、获取群里 @ 机器人的消息、以应用身份发消息、获取与上传图片或文件资源」→ 事件与回调都选「长连接」，订阅 `im.message.receive_v1` 和回调 `card.action.trigger` → 发布版本 → 把 App ID / Secret 填进设置并启用 → 生成绑定码，私聊机器人发「绑定 123456」。
+  - 长连接不需要公网地址。同一个机器人只让正式实例连，开发实例不要启用。
+  - 也可用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（写在 `.env`，docker-compose 里加到 environment）。
+  - 海外版切「Lark」。
+- **快捷指令**：生成随手记密钥，快捷指令「获取 URL 内容」POST 到 `{APP_URL}/api/capture`，JSON `{"text": 听写文本}`，头 `Authorization: Bearer cap_…`。手机要能访问到这台机器（同一 Wi-Fi 或 Tailscale）。
+- **语音识别**：填 OpenAI 兼容转写服务地址。本机可用 SenseVoice（如 `pip install funasr` 后起一个兼容服务）或 faster-whisper-server；云端可用硅基流动 `https://api.siliconflow.cn/v1` + `FunAudioLLM/SenseVoiceSmall`。设置页「测试」能验证连通。
+
 ## 忘记密码 / 重置管理员
 
 没有"初始密码"——第一次打开网页时由你自己创建管理员。忘记密码时在服务器上执行：
