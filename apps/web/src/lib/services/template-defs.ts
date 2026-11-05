@@ -6,6 +6,8 @@
 export type TplItem = {
   key: string; title: string; kind: string; phase: string; mustMeet?: boolean; leadTimeDays?: number;
   doneDefinition?: string; detail?: string; deps?: string[]; priority?: "P0" | "P1" | "P2" | "P3";
+  /** 重复规则（公司固定节点），见 recur.ts；套用时自动算出最近一期截止日 */
+  recur?: string;
 };
 export type TplPhase = { name: string; goal: string; kind?: "phase" | "release" };
 export type Template = { key: string; name: string; description: string; phases: TplPhase[]; items: TplItem[] };
@@ -98,6 +100,20 @@ export const TEMPLATES: Template[] = [
       { key: "invoice", title: "开具发票", kind: "finance", phase: "结项", mustMeet: true, doneDefinition: "数电票开具并发送客户", deps: ["acceptance"] },
       { key: "payment", title: "收取尾款", kind: "finance", phase: "结项", mustMeet: true, doneDefinition: "尾款到账", deps: ["invoice"], priority: "P0" },
       { key: "archive", title: "交付物与源码归档", kind: "doc", phase: "结项", mustMeet: true, doneDefinition: "源码、文档、账号移交清单登记位置", deps: ["acceptance"] },
+    ],
+  },
+  {
+    key: "company_cn", name: "公司固定事务（中国大陆小微企业）", description: "报税、汇算清缴、工商年报、社保公积金、发票整理等每年固定节点，完成一期自动生成下一期。具体期限以当地税务局与市场监管局为准",
+    phases: [],
+    items: [
+      { key: "vat_q", title: "增值税及附加税申报（季度）", kind: "finance", phase: "", recur: "quarterly:15", priority: "P0", doneDefinition: "电子税务局申报成功，申报表截图归档", detail: "小规模纳税人通常按季申报，季度结束后 15 日内（遇节假日顺延）。零申报也要报。逾期会产生滞纳金、影响纳税信用等级。" },
+      { key: "cit_q", title: "企业所得税预缴（季度）", kind: "finance", phase: "", recur: "quarterly:15", priority: "P0", doneDefinition: "预缴申报成功并归档", detail: "季度终了后 15 日内。小型微利企业有减免，但必须按期申报才能享受。" },
+      { key: "cit_annual", title: "企业所得税汇算清缴", kind: "finance", phase: "", recur: "yearly:05-31", priority: "P0", doneDefinition: "年度汇算申报成功，补/退税处理完毕", detail: "年度终了后 5 个月内（5 月 31 日前）。建议 4 月就找会计对账。" },
+      { key: "annual_report", title: "工商年报（国家企业信用信息公示系统）", kind: "compliance", phase: "", recur: "yearly:06-30", priority: "P0", doneDefinition: "公示系统年报提交成功，截图归档", detail: "每年 1 月 1 日至 6 月 30 日报送上一年度报告。逾期会被列入经营异常名录，可罚款；满 3 年列入严重违法失信名单。" },
+      { key: "iit_annual", title: "个人所得税综合所得汇算（老板本人）", kind: "finance", phase: "", recur: "yearly:06-30", doneDefinition: "个税 App 汇算完成", detail: "每年 3 月 1 日至 6 月 30 日。" },
+      { key: "social", title: "社保与公积金缴纳核对（每月）", kind: "finance", phase: "", recur: "monthly:15", doneDefinition: "当月扣缴成功，人员增减已处理", detail: "各地截止日不同，以当地社保与公积金中心为准；有人员入离职当月要办增减员。" },
+      { key: "invoice", title: "发票整理与进项确认（每月）", kind: "finance", phase: "", recur: "monthly:25", doneDefinition: "本月开票/收票清单核对，进项用途确认完成，交给会计", detail: "已全面数电票；进项需在电子发票服务平台确认用途后才能抵扣。采购、报销记得要票。" },
+      { key: "bookkeep", title: "交账给会计/代账（每月）", kind: "finance", phase: "", recur: "monthly:5", doneDefinition: "银行流水、发票、合同交给会计" },
     ],
   },
   {

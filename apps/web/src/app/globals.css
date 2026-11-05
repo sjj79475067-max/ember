@@ -32,9 +32,9 @@ body {
 }
 
 main { overflow-x: clip; }
-/* 极窄屏下网格按单列排布，避免内容被 clip 掉 */
+/* 极窄屏下网格按单列排布，避免内容被 clip 掉；日历、统计卡这类必须保持列数的加 keep-cols */
 @media (max-width: 419px) {
-  .grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .grid:not(.keep-cols) { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
 /* 统一的细滚动条，跟随明暗主题（避免暗色下出现白色滚动条） */

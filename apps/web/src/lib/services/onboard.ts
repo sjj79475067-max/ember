@@ -4,6 +4,10 @@ import { listProjects, getInbox } from "./projects";
 import { pullReminders, countOpen } from "./reminders";
 import { listPolicies } from "./policies";
 import { portfolioCards } from "./board";
+import { listAssets } from "./assets";
+import { listDeals } from "./crm";
+import { listPurchases } from "./purchases";
+import { agenda } from "./calendar";
 
 export function agentOnboard(agent: { name: string; sessionId: string }) {
   const projects = listProjects({});
@@ -49,6 +53,15 @@ export function agentOnboard(agent: { name: string; sessionId: string }) {
       done_evidence_suspect: suspiciousDone.map((i) => ({ item_id: i.id, title: i.title, evidence: i.evidence.slice(0, 120) })),
       changed_without_detail: mojibake.map((i) => ({ item_id: i.id, title: i.title, note: i.evidence })),
     },
+    company: (() => {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        expiring: listAssets().filter((a) => a.state === "expiring" || a.state === "expired").slice(0, 8).map((a) => ({ id: a.id, name: a.name, kind: a.kind, days_left: a.daysLeft })),
+        deals_next: listDeals({ open: true }).filter((d) => d.nextOverdue || d.noNextStep || (d.daysToNext != null && d.daysToNext <= 2)).slice(0, 8).map((d) => ({ id: d.id, title: d.title, next_step: d.nextStep || "（没写下一步）", next_step_at: d.nextStepAt, overdue: d.nextOverdue })),
+        purchases_attention: listPurchases({ open: true }).filter((p) => p.late || p.invoicePending || p.overBudget).slice(0, 8).map((p) => ({ id: p.id, title: p.title, status: p.label, late: p.late || undefined, invoice_pending: p.invoicePending || undefined })),
+        next_7_days: agenda(now - 86400, now + 7 * 86400).filter((e) => e.tone !== "ok").slice(0, 12).map((e) => ({ kind: e.kind, title: e.title, at: e.start })),
+      };
+    })(),
     since_last_time: changelog.map((c) => ({ version: c.version, title: c.title })),
     how_to_work: WORKFLOW,
   };
@@ -70,5 +83,6 @@ const WORKFLOW = [
   "9. 提醒：工具返回值里 reminders_unread 有未读提醒，先处理 P0。",
   "10. 分拣：inbox.pending > 0 时，看 inbox.items，确认归属后 item_move 分拣；分不清就保持原样并在会话总结里说明。",
   "11. 条例：你只能 policy_write 提议条例（进入待批准），由用户在网页批准；不要试图修改或废止条例。",
+  "11b. 公司事务：资质/账号/域名/证书/合同/设备等会到期的东西用 asset_save 登记（不写密码，只写保存位置）；要买的东西用 purchase_save（规格、注意事项、比价、订单号、发票）；客户合作用 deal_save（必须有下一步和时间）；出差用 trip_save。安排工作前看 calendar_agenda。",
   "12. 阶段门：阶段放行只能由用户在网页决定。你判断可以放行时，用 milestone_save 的 gate_proposal 写建议和依据。每周用 project_update_post 发一次进展（进展/阻塞/下一步 + 健康度）。",
 ].join("\n");

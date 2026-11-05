@@ -82,3 +82,24 @@ test("项目看板：总览、需求、计划、看板可用，手机宽度不�
   expect(w[0]).toBeLessThanOrEqual(392);
   expect(w[1]).toBeGreaterThan(380); // 主内容占满屏宽，不被顶栏挤成一条
 });
+
+test("事务页：日历、台账、采购、合作、行程可用", async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByPlaceholder("you@example.com").fill(EMAIL);
+  await page.locator('input[type="password"]').fill(PASS);
+  await page.getByRole("button", { name: /登录|创建并进入/ }).click();
+  await page.waitForURL(`${BASE}/`);
+  const now = Math.floor(Date.now() / 1000);
+  await page.request.post(`${BASE}/api/v1/call/asset_save`, { data: { kind: "domain", name: "e2e 域名", identifier: `e2e${now}.cn`, valid_until: now + 5 * 86400 } });
+  await page.request.post(`${BASE}/api/v1/call/purchase_save`, { data: { title: `e2e 键盘 ${now}` } });
+  for (const [tab, text] of [["calendar", "接下来"], ["assets", "e2e 域名"], ["purchases", `e2e 键盘 ${now}`], ["deals", "新合作"], ["trips", "新行程"]] as const) {
+    await page.goto(`${BASE}/affairs?tab=${tab}`);
+    await expect(page.getByText(text).first()).toBeVisible({ timeout: 20000 });
+  }
+  const ics = await page.request.post(`${BASE}/api/ui/calendar`, { data: { name: "e2e" } });
+  const tok = (await ics.json()).token;
+  const feed = await page.request.get(`${BASE}/api/calendar/${tok}.ics`);
+  expect(feed.status()).toBe(200);
+  expect(await feed.text()).toContain("BEGIN:VCALENDAR");
+  expect((await page.request.get(`${BASE}/api/calendar/cal_wrong.ics`)).status()).toBe(404);
+});

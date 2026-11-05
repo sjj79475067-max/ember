@@ -8,7 +8,7 @@ import { audit } from "@/lib/audit";
 export const WRITE_TOOLS = [
   "checklist_add", "checklist_update", "checklist_progress", "checklist_supersede", "claim_item", "release_item", "meeting_import",
   "ingest_history", "note_save", "decision_record", "file_register", "file_verify", "file_move",
-  "item_move", "item_merge", "project_create", "project_groups", "milestone_save", "requirement_save", "item_link", "template_apply", "project_update_post", "reminder_ack", "policy_write", "policy_ack", "session_end",
+  "item_move", "item_merge", "project_create", "project_groups", "milestone_save", "requirement_save", "item_link", "template_apply", "project_update_post", "asset_save", "purchase_save", "deal_save", "trip_save", "reminder_ack", "policy_write", "policy_ack", "session_end",
 ];
 
 export const BODY_MAX = 2000;

@@ -9,6 +9,13 @@ import { listRequirements, saveRequirement, getRequirement } from "@/lib/service
 import { addDep, removeDep } from "@/lib/services/deps";
 import { projectBoard, postProjectUpdate, ITEM_KINDS } from "@/lib/services/board";
 import { listTemplates, applyTemplate } from "@/lib/services/templates";
+import { listAssets, saveAsset, assetFromItem, ASSET_KINDS } from "@/lib/services/assets";
+import { listPurchases, savePurchase, addQuote, PURCHASE_STATUS } from "@/lib/services/purchases";
+import { listDeals, saveDeal, saveContact, listContacts, DEAL_STAGES } from "@/lib/services/crm";
+import { listTrips, saveTrip } from "@/lib/services/trips";
+import { agenda } from "@/lib/services/calendar";
+import { addOwnedItems } from "@/lib/services/owned";
+import { validRecur } from "@/lib/services/recur";
 import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
 import { createMeeting, getMeeting, listMeetings, linkItemToMeeting, saveMeetingItemsSnapshot, previewMeetingItems } from "@/lib/services/meetings";
 import { ingest } from "@/lib/services/ingest";
@@ -349,9 +356,19 @@ export const tools: ToolDef[] = [
         start_at: iso.optional(),
         lead_time_days: z.number().int().optional().describe("通常需要几天（备案、认证类填）"),
         blocked_by: z.array(z.string()).optional().describe("前置事项 id：它们完成后本事项才能开始"),
+        recur: z.string().optional().describe("重复：monthly:15 / quarterly:15 / yearly:05-31（完成后自动生成下一期）"),
       })).min(1).max(50),
+      owner_type: z.enum(["purchase", "deal", "trip", "asset"]).optional().describe("这些事项挂在哪个事务对象下：采购的比价下单、合作的准备材料、行程的出行准备"),
+      owner_id: z.string().optional(),
     }),
     handler: async (i, ctx) => {
+      for (const x of i.items as Array<{ recur?: string }>) if (x.recur && !validRecur(x.recur)) throw Object.assign(new Error(`重复规则「${x.recur}」看不懂，用 monthly:15 / quarterly:15 / yearly:05-31`), { status: 422 });
+      if (i.owner_type) {
+        if (!i.owner_id) throw Object.assign(new Error("owner_type 需要配 owner_id"), { status: 422 });
+        gate(ctx, null, "checklist_add");
+        const res = addOwnedItems(i.owner_type, i.owner_id, i.items.map((x: Record<string, unknown>) => ({ title: x.title as string, detailMd: x.detail_md as string, doneDefinition: x.done_definition as string, priority: x.priority as never, dueAt: x.due_at as never, kind: x.kind as string | undefined, recurRule: x.recur as string | undefined })), ctx.actor);
+        return envelope({ ids: res.ids, merged: res.merged }, [`已挂到 ${i.owner_type}:${i.owner_id}`, ...res.hints.slice(0, 3)]);
+      }
       const p = i.project ? resolveProjectOrNull(i.project) : getInbox();
       gate(ctx, p!.isInbox ? null : p!.id, "checklist_add");
       const res = addItems(p!.id, i.items.map((x: Record<string, unknown>) => {
@@ -362,6 +379,7 @@ export const tools: ToolDef[] = [
           workstreamId: x.group ? ensureGroup(p!.id, x.group as string).id : null,
           kind: x.kind as string | undefined, milestoneId: st.milestoneId, requirementId: st.requirementId,
           mustMeet: x.must_meet as boolean | undefined, startAt: x.start_at as never, leadTimeDays: x.lead_time_days as never,
+          recurRule: x.recur as string | undefined,
         };
       }), ctx.actor, ctx.ip);
       // 依赖：按输入位置对应到最终落库的事项（新建或被合并进的那条）
@@ -424,6 +442,7 @@ export const tools: ToolDef[] = [
           res.item = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get()!;
         }
         const hints: string[] = [];
+        if (res.nextRecur) hints.push(`这是重复事项，已生成下一期（截止 ${new Date(res.nextRecur.dueAt! * 1000).toLocaleDateString("zh-CN")}）。`);
         if (res.waitingOn?.length) hints.push(`提醒：前置事项还没完成（${res.waitingOn.join("、")}），确认可以并行再继续。`);
         if (res.flag === "evidence_is_progress") {
           hints.push("注意：这条 evidence 读起来是「进行到哪一步」，不是「做到了什么程度」。任务已标记完成但进入「待核实」（needs_review=1）。如果其实没做完，请改回 doing，并用 checklist_progress 记录进展。");
@@ -767,6 +786,140 @@ export const tools: ToolDef[] = [
       if (!i.groups) return envelope({ groups: listGroups(p!.id) });
       gate(ctx, p!.isInbox ? null : p!.id, "project_groups");
       return envelope({ groups: setProjectGroups(p!.id, i.groups, ctx.actor) });
+    },
+  },
+  {
+    name: "asset_save",
+    title: "登记/更新台账（资质、账号、域名、证书、合同、订阅、设备）",
+    description:
+      "长期存在、会到期的东西登记在台账里：备案号、软著证书、开发者账号、商户号、云账号、域名、SSL 证书、合同、订阅、设备。到期前按 remind_days 提醒，并写明过期后果。\n" +
+      "办理过程是事项，办完的结果登记到台账：传 from_item=事项 id 自动带上项目与证据。\n" +
+      "【不要写密码】：secret_ref 只写保存位置（如「1Password：苹果开发者」），检测到疑似密码会拒收。",
+    write: true,
+    input: z.object({
+      id: z.string().optional(), from_item: z.string().optional(),
+      kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
+      name: z.string().optional(), identifier: z.string().optional().describe("编号：备案号、AppID、域名、证书号、合同号、序列号"),
+      authority: z.string().optional().describe("办理机构/平台"), owner: z.string().optional().describe("归属主体或人"),
+      project: z.string().optional(), valid_from: iso.nullable().optional(), valid_until: iso.nullable().optional(),
+      renew_rule: z.string().optional(), remind_days: z.string().optional().describe("如 30,14,7"),
+      status: z.enum(["active", "revoked"]).optional(), secret_ref: z.string().optional(), notes_md: z.string().optional(), cost_yuan: z.number().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      gate(ctx, p?.id ?? null, "asset_save");
+      const input = { id: i.id, kind: i.kind, name: i.name, identifier: i.identifier, authority: i.authority, owner: i.owner, projectId: p ? p.id : undefined, validFrom: i.valid_from as never, validUntil: i.valid_until as never, renewRule: i.renew_rule, remindDays: i.remind_days, status: i.status, secretRef: i.secret_ref, notesMd: i.notes_md, costYuan: i.cost_yuan };
+      const a = i.from_item ? assetFromItem(i.from_item, input, ctx.actor) : saveAsset(input, ctx.actor);
+      return envelope({ asset: a }, a.daysLeft != null && a.daysLeft <= 30 ? [`注意：${a.daysLeft < 0 ? "已过期" : `${a.daysLeft} 天后到期`}。${a.consequence}`] : []);
+    },
+  },
+  {
+    name: "asset_list",
+    title: "查台账",
+    description: "列出台账，按剩余天数排序。state=expiring 即将到期 / expired 已过期。",
+    input: z.object({ kind: z.string().optional(), project: z.string().optional(), state: z.enum(["active", "expiring", "expired", "revoked"]).optional() }),
+    handler: async (i) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      return envelope({ assets: listAssets({ kind: i.kind, projectId: p?.id, state: i.state }).map((a) => ({ id: a.id, kind: a.kind, name: a.name, identifier: a.identifier, owner: a.owner, valid_until: a.validUntil, days_left: a.daysLeft, state: a.state, secret_ref: a.secretRef || undefined })) });
+    },
+  },
+  {
+    name: "purchase_save",
+    title: "采购：记要买的东西 / 加报价 / 推进状态",
+    description:
+      "要买设备或配件时调用。写清 spec_md（型号规格要求）和 caveats_md（注意事项：接口、兼容、电压、发票抬头…）。\n" +
+      `状态：${PURCHASE_STATUS.join(" → ")}。add_quote 加一家报价（自动算到手价、标出最低）；选定后 chosen_quote_id；下单必须填 order_no；到货填 holder/location/warranty_until 会自动登记成设备台账。\n` +
+      "比价、下单、催发票这类动作用 checklist_add(owner_type=purchase, owner_id=…) 挂成待办。",
+    write: true,
+    input: z.object({
+      id: z.string().optional(), title: z.string().optional(), spec_md: z.string().optional(), caveats_md: z.string().optional(),
+      status: z.enum(PURCHASE_STATUS as unknown as [string, ...string[]]).optional(), budget_yuan: z.number().nullable().optional(), qty: z.number().int().optional(),
+      needed_by: iso.nullable().optional(), project: z.string().optional(), chosen_quote_id: z.string().optional(), order_no: z.string().optional(),
+      holder: z.string().optional(), location: z.string().optional(), warranty_until: iso.nullable().optional(),
+      invoice_status: z.enum(["none", "requested", "received", "not_needed"]).optional(),
+      add_quote: z.object({ vendor: z.string(), url: z.string().optional(), model: z.string().optional(), price_yuan: z.number(), shipping_yuan: z.number().optional(), notes: z.string().optional() }).optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      gate(ctx, p?.id ?? null, "purchase_save");
+      let r = savePurchase({ id: i.id, title: i.title, specMd: i.spec_md, caveatsMd: i.caveats_md, status: i.status, budgetYuan: i.budget_yuan, qty: i.qty, neededBy: i.needed_by as never, projectId: p ? p.id : undefined, chosenQuoteId: i.chosen_quote_id, orderNo: i.order_no, holder: i.holder, location: i.location, warrantyUntil: i.warranty_until as never, invoiceStatus: i.invoice_status }, ctx.actor);
+      if (i.add_quote) r = addQuote(r.id, { vendor: i.add_quote.vendor, url: i.add_quote.url, model: i.add_quote.model, priceYuan: i.add_quote.price_yuan, shippingYuan: i.add_quote.shipping_yuan, notes: i.add_quote.notes }, ctx.actor);
+      const hints: string[] = [];
+      if (r.overBudget) hints.push("选定的报价超预算了。");
+      if (r.invoicePending) hints.push("记得要发票（invoice_status）。");
+      return envelope({ purchase: r }, hints);
+    },
+  },
+  {
+    name: "deal_save",
+    title: "客户合作：记合作 / 推进阶段 / 下一步",
+    description:
+      `合作机会（谈一个客户、一次合作）。阶段：${DEAL_STAGES.join(" → ")}。推进中的合作必须有 next_step 和 next_step_at（下一步做什么、什么时候）——这是最容易丢的；没谈成必须写 lost_reason。\n` +
+      "org 写机构名（不存在会自动建），contact 一并登记联系人。要准备的材料用 checklist_add(owner_type=deal, owner_id=…) 挂上。谈成后可用 project_create(template=client) 转成交付项目，再把 project 关联回来。",
+    write: true,
+    input: z.object({
+      id: z.string().optional(), title: z.string().optional(), org: z.string().optional(),
+      contact: z.object({ name: z.string(), title: z.string().optional(), phone: z.string().optional(), wechat: z.string().optional(), email: z.string().optional() }).optional(),
+      stage: z.enum(DEAL_STAGES as unknown as [string, ...string[]]).optional(), amount_yuan: z.number().nullable().optional(), probability: z.number().int().optional(),
+      expected_close_at: iso.nullable().optional(), next_step: z.string().optional(), next_step_at: iso.nullable().optional(),
+      lost_reason: z.string().optional(), notes_md: z.string().optional(), project: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      gate(ctx, p?.id ?? null, "deal_save");
+      const c = i.contact ? saveContact({ org: i.org ?? null, name: i.contact.name, title: i.contact.title, phone: i.contact.phone, wechat: i.contact.wechat, email: i.contact.email, touched: true }, ctx.actor) : null;
+      const d = saveDeal({ id: i.id, title: i.title, org: i.org, contactId: c?.id, stage: i.stage, amountYuan: i.amount_yuan, probability: i.probability, expectedCloseAt: i.expected_close_at as never, nextStep: i.next_step, nextStepAt: i.next_step_at as never, lostReason: i.lost_reason, notesMd: i.notes_md, projectId: p ? p.id : undefined }, ctx.actor);
+      const hints: string[] = [];
+      if (d.noNextStep) hints.push("这条合作还没有「下一步」，请补上 next_step 与 next_step_at。");
+      if (d.stage === "won" && !d.projectId) hints.push("已签约：可以 project_create(template=client) 建交付项目，再 deal_save(project=…) 关联。");
+      return envelope({ deal: d }, hints);
+    },
+  },
+  {
+    name: "trip_save",
+    title: "行程：出差/拜访客户",
+    description: "记行程（时间、城市、交通段、住宿、同行人、关联合作）。新建时默认生成行前与行后准备清单（订票、订酒店、带资料、票据报销、纪要归档）；改出发日会自动平移未完成的准备事项。",
+    write: true,
+    input: z.object({
+      id: z.string().optional(), title: z.string().optional(), purpose: z.string().optional(), city: z.string().optional(),
+      start_at: iso.optional(), end_at: iso.optional(), deal_id: z.string().optional(), project: z.string().optional(),
+      legs: z.array(z.object({ type: z.string().optional(), no: z.string().optional(), from: z.string().optional(), to: z.string().optional(), depart_at: iso.optional(), arrive_at: iso.optional(), order_no: z.string().optional() })).optional(),
+      lodging: z.array(z.object({ name: z.string().optional(), address: z.string().optional(), check_in: iso.optional(), check_out: iso.optional(), order_no: z.string().optional() })).optional(),
+      attendees: z.string().optional(), notes_md: z.string().optional(), with_prep: z.boolean().optional(),
+    }),
+    handler: async (i, ctx) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      gate(ctx, p?.id ?? null, "trip_save");
+      const t = saveTrip({
+        id: i.id, title: i.title, purpose: i.purpose, city: i.city, startAt: i.start_at, endAt: i.end_at, dealId: i.deal_id, projectId: p ? p.id : undefined,
+        legs: i.legs?.map((l: Record<string, unknown>) => ({ type: l.type, no: l.no, from: l.from, to: l.to, departAt: l.depart_at, arriveAt: l.arrive_at, orderNo: l.order_no })) as never,
+        lodging: i.lodging?.map((l: Record<string, unknown>) => ({ name: l.name, address: l.address, checkIn: l.check_in, checkOut: l.check_out, orderNo: l.order_no })) as never,
+        attendees: i.attendees, notesMd: i.notes_md, withPrep: i.with_prep,
+      }, ctx.actor);
+      return envelope({ trip: t });
+    },
+  },
+  {
+    name: "affairs_list",
+    title: "公司事务总览（采购 / 合作 / 联系人 / 行程）",
+    description: "一次看公司层面的在办事务：未完成采购、在谈合作（含下一步与是否逾期）、很久没联系的人、近期行程。",
+    input: z.object({ include_closed: z.boolean().optional() }),
+    handler: async (i) => envelope({
+      purchases: listPurchases({ open: !i.include_closed }).map((p) => ({ id: p.id, title: p.title, status: p.label, budget: p.budget, cheapest: p.cheapest ? `${p.cheapest.vendor} ¥${p.cheapest.total}` : null, needed_by: p.neededBy, late: p.late || undefined, invoice_pending: p.invoicePending || undefined })),
+      deals: listDeals({ open: !i.include_closed }).map((d) => ({ id: d.id, title: d.title, org: d.org?.name, stage: d.label, amount: d.amount, next_step: d.nextStep, next_step_at: d.nextStepAt, next_overdue: d.nextOverdue || undefined, prep_open: d.prepOpen })),
+      contacts_to_follow: listContacts().filter((c) => c.overdueContact).map((c) => ({ id: c.id, name: c.name, org: c.orgName, days_since: c.daysSince })),
+      trips: listTrips({ upcoming: true }).map((t) => ({ id: t.id, title: t.title, city: t.city, start_at: t.startAt, end_at: t.endAt, phase: t.phase, prep_open: t.prepOpen })),
+    }),
+  },
+  {
+    name: "calendar_agenda",
+    title: "日程：某段时间内所有带日期的事",
+    description: "把事项截止、阶段节点、台账到期、采购需到货、合作下一步、行程合在一起按时间排。不传时间默认今天起 14 天。安排「这周做什么」前先看它。",
+    input: z.object({ from: iso.optional(), to: iso.optional() }),
+    handler: async (i) => {
+      const now = Math.floor(Date.now() / 1000);
+      const from = i.from ?? now - 86400, to = i.to ?? now + 14 * 86400;
+      return envelope({ events: agenda(from, to).map((e) => ({ kind: e.kind, title: e.title, at: e.start, end: e.end, tone: e.tone, note: e.note, link: e.href })) });
     },
   },
   {

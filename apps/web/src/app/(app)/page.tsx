@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { db, s } from "@/lib/db";
-import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { listProjects } from "@/lib/services/projects";
 import { portfolioCards } from "@/lib/services/board";
+import { agenda } from "@/lib/services/calendar";
 import { HEALTH_LABEL, MS_STATUS_LABEL } from "@/lib/labels";
 import { pullReminders } from "@/lib/services/reminders";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { fmtDate, daysLeft, KIND_LABEL, STATUS_LABEL, REM_KIND_LABEL } from "@/lib/utils";
+import { fmtDate, KIND_LABEL, REM_KIND_LABEL } from "@/lib/utils";
 import { ArrowRight, AlertTriangle, CalendarClock, CheckCircle2, CircleDot, Inbox } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -17,10 +18,7 @@ export default async function Dashboard() {
   const active = projects.filter((p) => p.status === "active");
   const reminders = pullReminders({ limit: 8 });
   const now = Math.floor(Date.now() / 1000);
-  const week = now + 7 * 86400;
-  const upcoming = db.select().from(s.items)
-    .where(and(isNotNull(s.items.dueAt), lte(s.items.dueAt, week), gte(s.items.dueAt, 0), sql`${s.items.status} not in ('done','dropped')`))
-    .orderBy(s.items.dueAt).limit(8).all();
+  const soon = agenda(now - 86400, now + 7 * 86400).filter((e) => e.tone !== "ok").slice(0, 10);
   const recentMeetings = db.select().from(s.meetings).orderBy(desc(s.meetings.heldAt)).limit(4).all();
   type Card = { id: string; health: string; healthSource: string; updateMissing: boolean; current: string | null; release: { name: string; mustDone: number; mustTotal: number; ready: boolean; daysLeft: number | null } | null; waiting: number; phases: Array<{ name: string; status: string; startAt: number | null; dueAt: number | null; done: number; total: number }> };
   const cards = new Map((portfolioCards() as Card[]).map((c) => [c.id, c]));
@@ -36,7 +34,7 @@ export default async function Dashboard() {
         <Link href="/import" className="rounded-lg bg-[var(--color-brand)] px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:brightness-110">导入会议 / 资料</Link>
       </header>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="keep-cols mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat icon={<CircleDot />} label="进行中项目" value={active.length} />
         <Stat icon={<CheckCircle2 />} label="已完成任务" value={`${totals.done}/${totals.total}`} tone="ok" />
         <Stat icon={<AlertTriangle />} label="阻塞" value={totals.blocked} tone={totals.blocked ? "danger" : "default"} />
@@ -110,15 +108,15 @@ export default async function Dashboard() {
             </Card>
           </div>
           <div>
-            <h2 className="mb-2.5 text-sm font-semibold text-[var(--color-muted)]">7 天内到期</h2>
+            <h2 className="mb-2.5 flex items-center justify-between text-sm font-semibold text-[var(--color-muted)]">未来 7 天<Link href="/affairs?tab=calendar" className="text-[11px] font-normal text-[var(--color-brand)] hover:underline">日历</Link></h2>
             <Card><CardContent className="divide-y divide-[var(--color-line)] p-0">
-              {upcoming.length === 0 && <p className="p-4 text-sm text-[var(--color-muted)]">暂无</p>}
-              {upcoming.map((it) => {
-                const d = daysLeft(it.dueAt);
+              {soon.length === 0 && <p className="p-4 text-sm text-[var(--color-muted)]">暂无</p>}
+              {soon.map((e) => {
+                const d = Math.ceil((e.start - now) / 86400);
                 return (
-                  <Link key={it.id} href={`/p/${it.projectId}`} className="flex items-center justify-between gap-2 p-3 hover:bg-[var(--color-brand-soft)]/40">
-                    <span className="truncate text-[13px]">{it.title}</span>
-                    <Badge tone={(d ?? 0) < 0 ? "danger" : (d ?? 0) <= 1 ? "warn" : "default"}>{d! < 0 ? `逾期 ${-d!} 天` : `${d} 天`}</Badge>
+                  <Link key={e.id} href={e.href} className="flex items-center justify-between gap-2 p-3 hover:bg-[var(--color-brand-soft)]/40">
+                    <span className="min-w-0 truncate text-[13px]">{e.title}</span>
+                    <Badge tone={d < 0 ? "danger" : d <= 1 ? "warn" : "default"}>{d < 0 ? `逾期 ${-d} 天` : d === 0 ? "今天" : `${d} 天`}</Badge>
                   </Link>
                 );
               })}

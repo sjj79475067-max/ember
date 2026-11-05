@@ -6,6 +6,7 @@ import { audit } from "@/lib/audit";
 import { ensureInbox } from "./projects";
 import { syncRequirement } from "./requirements";
 import { waitingOn, cleanupDepsForItem } from "./deps";
+import { nextOccurrence, validRecur, describeRecur } from "./recur";
 
 export type ItemStatus = "todo" | "doing" | "blocked" | "done" | "dropped" | "changed";
 const CLAIM_TTL = 60 * 60 * 2; // 2h 心跳过期
@@ -21,6 +22,7 @@ export type ItemInput = {
   statusNote?: string;
   kind?: string; milestoneId?: string | null; requirementId?: string | null; mustMeet?: boolean;
   startAt?: number | null; leadTimeDays?: number | null;
+  recurRule?: string; ownerType?: string; ownerId?: string;
 };
 
 export type UpdatePatch = {
@@ -111,11 +113,13 @@ export function addItems(projectId: string, list: ItemInput[], actor: Actor, ip 
   const byIndex: Array<string | null> = list.map(() => null); // 第 i 条输入最终落到哪个事项（新建或合并进的）
   const merged: Array<{ id: string; intoTitle: string; reason: string }> = [];
   const hints: string[] = [];
-  const open = db.select().from(s.items).where(and(eq(s.items.projectId, p.id), inArray(s.items.status, [...OPEN_STATUSES]), isNull(s.items.parkingLot))).all();
+  const openAll = db.select().from(s.items).where(and(eq(s.items.projectId, p.id), inArray(s.items.status, [...OPEN_STATUSES]), isNull(s.items.parkingLot))).all();
 
   db.transaction(() => {
     list.forEach((it, i) => {
       const title = it.title.trim();
+      // 合并候选只在同一归属里找：采购的待办不会被并进合作的待办
+      const open = openAll.filter((o) => (o.ownerType || "") === (it.ownerType || "") && (o.ownerId || "") === (it.ownerId || ""));
       // 1) 显式进展合并
       if (it.expectedVersion != null) {
         const cand = open.find((o) => o.version !== it.expectedVersion && similar(o.title, title));
@@ -163,6 +167,7 @@ export function addItems(projectId: string, list: ItemInput[], actor: Actor, ip 
         sourceRef: it.sourceRef ?? "", position: maxPos + i + 1, createdAt: nowSec(), updatedAt: nowSec(),
         kind: it.kind ?? "task", milestoneId: it.milestoneId ?? null, requirementId: it.requirementId ?? null,
         mustMeet: it.mustMeet ? 1 : 0, startAt: it.startAt ?? null, leadTimeDays: it.leadTimeDays ?? null,
+        recurRule: it.recurRule && validRecur(it.recurRule) ? it.recurRule : "", ownerType: it.ownerType ?? "", ownerId: it.ownerId ?? "",
       }).run();
       db.insert(s.itemEvents).values({ id: newId("evt"), itemId: id, actorType: actor.type, actorName: actor.name, action: "create", toStatus: "todo", createdAt: nowSec() }).run();
       created.push(id);
@@ -257,9 +262,31 @@ export function updateItem(itemId: string, patch: UpdatePatch, actor: Actor, age
   const updated = db.select().from(s.items).where(eq(s.items.id, itemId)).get()!;
   syncRequirement(updated.requirementId);
   if (cur.requirementId && cur.requirementId !== updated.requirementId) syncRequirement(cur.requirementId);
+  const nextRecur = patch.status === "done" && cur.status !== "done" ? spawnNextRecurrence(updated, actor) : null;
   // 开工但前置没完成：不拦，只提醒（一人公司常有「先并行准备」的情况）
   const waits = patch.status === "doing" ? waitingOn(itemId) : [];
-  return { item: updated, progress: progressFor(cur.projectId), flag, waitingOn: waits.map((w) => w.blockerTitle) };
+  return { item: updated, progress: progressFor(cur.projectId), flag, waitingOn: waits.map((w) => w.blockerTitle), nextRecur };
+}
+
+/** 重复事项完成后生成下一期（同一根下只保留一个未完成的下一期，防止重复点完成生成多条） */
+function spawnNextRecurrence(done: typeof s.items.$inferSelect, actor: Actor) {
+  if (!done.recurRule) return null;
+  const root = done.recurParentId || done.id;
+  const pending = db.select().from(s.items).where(eq(s.items.recurParentId, root)).all().find((i) => !["done", "dropped"].includes(i.status) && i.id !== done.id);
+  if (pending) return { id: pending.id, dueAt: pending.dueAt };
+  const due = nextOccurrence(done.recurRule, Math.max(done.dueAt ?? 0, nowSec()));
+  if (!due) return null;
+  const id = newId("itm");
+  const t = nowSec();
+  const maxPos = db.select({ m: sql<number>`coalesce(max(${s.items.position}),0)` }).from(s.items).where(eq(s.items.projectId, done.projectId)).get()?.m ?? 0;
+  const base = done.detailMd.includes("【") ? done.detailMd.slice(0, done.detailMd.indexOf("【")).trim() : done.detailMd;
+  db.insert(s.items).values({
+    id, projectId: done.projectId, title: done.title, detailMd: base, doneDefinition: done.doneDefinition, priority: done.priority,
+    kind: done.kind, dueAt: due, recurRule: done.recurRule, recurParentId: root, ownerType: done.ownerType, ownerId: done.ownerId,
+    workstreamId: done.workstreamId, milestoneId: null, sourceType: "manual", sourceRef: `recur:${root}`, position: maxPos + 1, createdAt: t, updatedAt: t,
+  }).run();
+  db.insert(s.itemEvents).values({ id: newId("evt"), itemId: id, actorType: "system", actorName: "system", action: "create", toStatus: "todo", note: `${describeRecur(done.recurRule)}的下一期（上一期由 ${actor.name} 完成）`, createdAt: t }).run();
+  return { id, dueAt: due };
 }
 
 /** 追加一条进展（不改变状态）：进度是叠加的，不是靠新建任务体现 */

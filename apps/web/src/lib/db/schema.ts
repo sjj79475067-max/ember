@@ -143,6 +143,10 @@ export const items = sqliteTable("items", {
   startAt: integer(),
   leadTimeDays: integer(),
   templateKey: text().notNull().default(""),
+  ownerType: text().notNull().default(""), // purchase|deal|trip|asset —— 事项挂在哪个事务对象下
+  ownerId: text().notNull().default(""),
+  recurRule: text().notNull().default(""), // monthly:15 | quarterly:15 | yearly:05-31
+  recurParentId: text().notNull().default(""),
   supersededBy: text().notNull().default(""), // 被哪个更新后的任务替代（版本更迭链）
   parentId: text(),
   title: text().notNull(),
@@ -367,6 +371,134 @@ export const agentChangelog = sqliteTable("agent_changelog", {
   version: text().notNull(),
   title: text().notNull(),
   bodyMd: text().notNull().default(""),
+  createdAt: now(),
+});
+
+// ---------- 第二批：公司事务 ----------
+export const assets = sqliteTable("assets", {
+  id: text().primaryKey(),
+  kind: text().notNull().default("account"), // credential|account|domain|cert|contract|subscription|device
+  name: text().notNull(),
+  identifier: text().notNull().default(""),
+  authority: text().notNull().default(""),
+  owner: text().notNull().default(""),
+  projectId: text(),
+  validFrom: integer(),
+  validUntil: integer(),
+  renewRule: text().notNull().default(""),
+  remindDays: text().notNull().default("30,14,7"),
+  status: text().notNull().default("active"), // active|revoked（expiring/expired 由日期推导）
+  sourceItemId: text().notNull().default(""),
+  secretRef: text().notNull().default(""),
+  notesMd: text().notNull().default(""),
+  cost: integer(), // 分
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_assets_until").on(t.validUntil), index("idx_assets_kind").on(t.kind)]);
+
+export const purchases = sqliteTable("purchases", {
+  id: text().primaryKey(),
+  title: text().notNull(),
+  specMd: text().notNull().default(""),
+  caveatsMd: text().notNull().default(""),
+  status: text().notNull().default("idea"), // idea|comparing|approved|ordered|received|in_use|returned|retired
+  budget: integer(), // 分
+  qty: integer().notNull().default(1),
+  neededBy: integer(),
+  projectId: text(),
+  chosenQuoteId: text(),
+  orderNo: text().notNull().default(""),
+  orderedAt: integer(),
+  receivedAt: integer(),
+  warrantyUntil: integer(),
+  holder: text().notNull().default(""),
+  location: text().notNull().default(""),
+  invoiceStatus: text().notNull().default("none"), // none|requested|received|not_needed
+  assetId: text(),
+  createdBy: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_purchases_status").on(t.status)]);
+
+export const quotes = sqliteTable("quotes", {
+  id: text().primaryKey(),
+  purchaseId: text().notNull(),
+  vendor: text().notNull(),
+  url: text().notNull().default(""),
+  model: text().notNull().default(""),
+  price: integer().notNull(), // 分
+  shipping: integer().notNull().default(0),
+  notes: text().notNull().default(""),
+  capturedAt: now(),
+}, (t) => [index("idx_quotes_purchase").on(t.purchaseId)]);
+
+export const orgs = sqliteTable("orgs", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  kind: text().notNull().default("client"), // client|vendor|partner|platform
+  website: text().notNull().default(""),
+  notesMd: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+});
+
+export const contacts = sqliteTable("contacts", {
+  id: text().primaryKey(),
+  orgId: text(),
+  name: text().notNull(),
+  title: text().notNull().default(""),
+  phone: text().notNull().default(""),
+  wechat: text().notNull().default(""),
+  email: text().notNull().default(""),
+  notesMd: text().notNull().default(""),
+  lastContactAt: integer(),
+  contactEveryDays: integer(),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_contacts_org").on(t.orgId)]);
+
+export const deals = sqliteTable("deals", {
+  id: text().primaryKey(),
+  orgId: text(),
+  contactId: text(),
+  title: text().notNull(),
+  stage: text().notNull().default("lead"), // lead|talking|proposal|negotiating|won|lost
+  amount: integer(), // 分
+  probability: integer(),
+  expectedCloseAt: integer(),
+  nextStep: text().notNull().default(""),
+  nextStepAt: integer(),
+  projectId: text(),
+  lostReason: text().notNull().default(""),
+  notesMd: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_deals_stage").on(t.stage)]);
+
+export const trips = sqliteTable("trips", {
+  id: text().primaryKey(),
+  title: text().notNull(),
+  purpose: text().notNull().default(""),
+  city: text().notNull().default(""),
+  startAt: integer().notNull(),
+  endAt: integer().notNull(),
+  dealId: text(),
+  projectId: text(),
+  legsJson: text().notNull().default("[]"),
+  lodgingJson: text().notNull().default("[]"),
+  attendees: text().notNull().default(""),
+  notesMd: text().notNull().default(""),
+  createdAt: now(),
+  updatedAt: now(),
+}, (t) => [index("idx_trips_start").on(t.startAt)]);
+
+export const calendarFeeds = sqliteTable("calendar_feeds", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  tokenHash: text().notNull().unique(),
+  prefix: text().notNull(),
+  revokedAt: integer(),
+  lastUsedAt: integer(),
   createdAt: now(),
 });
 

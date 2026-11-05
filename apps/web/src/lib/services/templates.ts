@@ -5,6 +5,7 @@ import type { Actor } from "@/lib/audit";
 import { audit } from "@/lib/audit";
 import { TEMPLATES, getTemplate } from "./template-defs";
 import { addDep } from "./deps";
+import { nextOccurrence } from "./recur";
 
 export function listTemplates() {
   return TEMPLATES.map((t) => ({
@@ -55,8 +56,9 @@ export function applyTemplate(projectId: string, key: string, actor: Actor) {
       maxPos += 1;
       db.insert(s.items).values({
         id, projectId, title: it.title, detailMd: it.detail ?? "", doneDefinition: it.doneDefinition ?? "",
-        kind: it.kind, milestoneId: msByName.get(it.phase) ?? null, mustMeet: it.mustMeet ? 1 : 0,
+        kind: it.kind, milestoneId: it.phase ? msByName.get(it.phase) ?? null : null, mustMeet: it.mustMeet ? 1 : 0,
         leadTimeDays: it.leadTimeDays ?? null, priority: it.priority ?? "P1", templateKey: `${key}:${it.key}`,
+        recurRule: it.recur ?? "", dueAt: it.recur ? nextOccurrence(it.recur, t - 1) : null,
         sourceType: "manual", sourceRef: `template:${key}`, position: maxPos, createdAt: t, updatedAt: t,
       }).run();
       db.insert(s.itemEvents).values({ id: newId("evt"), itemId: id, actorType: actor.type, actorName: actor.name, action: "create", toStatus: "todo", note: `来自模板「${tpl.name}」`, createdAt: t }).run();

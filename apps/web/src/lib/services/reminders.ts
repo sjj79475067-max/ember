@@ -97,6 +97,37 @@ export function refreshReminders() {
       upsert({ kind: "review", severity: "P2", title: `项目该发进展了：${p.name}`, bodyMd: `超过 ${p.updateEveryDays || 7} 天没有进展更新。写三句：进展、阻塞、下一步。`, projectId: p.id, targetType: "project", targetId: p.id, dedupeKey: `pu-missing:${p.id}:${ymdWeek(t)}` });
     }
   }
+  // 台账到期：按 remindDays 分档（如 30/14/7 天各一次），过期后每周提醒并写明后果
+  for (const a of db.select().from(s.assets).all()) {
+    if (!a.validUntil || a.status === "revoked") continue;
+    const left = Math.ceil((a.validUntil - t) / DAY);
+    const tiers = a.remindDays.split(",").map((x) => Number(x.trim())).filter((x) => x > 0).sort((x, y) => x - y);
+    const tier = tiers.find((d) => left <= d);
+    if (left < 0) upsert({ kind: "overdue", severity: "P0", title: `已过期：${a.name}`, bodyMd: `${a.identifier ? `${a.identifier}，` : ""}过期 ${-left} 天。${a.renewRule ? `续期：${a.renewRule}。` : ""}`, projectId: a.projectId, targetType: "asset", targetId: a.id, dedupeKey: `asset-expired:${a.id}:${ymdWeek(t)}` });
+    else if (tier != null) upsert({ kind: "due", severity: left <= 7 ? "P0" : "P1", title: `${left} 天后到期：${a.name}`, bodyMd: `${a.identifier ? `${a.identifier}，` : ""}到期 ${iso(a.validUntil)}。${a.renewRule ? `续期：${a.renewRule}。` : ""}`, projectId: a.projectId, targetType: "asset", targetId: a.id, dedupeKey: `asset-due:${a.id}:${tier}` });
+  }
+  // 采购：需到货日已过还没到、到货后发票没拿
+  for (const p of db.select().from(s.purchases).all()) {
+    if (p.neededBy && p.neededBy < t && ["idea", "comparing", "approved", "ordered"].includes(p.status)) upsert({ kind: "overdue", severity: "P1", title: `采购来不及：${p.title}`, bodyMd: `需要在 ${iso(p.neededBy)} 前到货，当前「${p.status}」。`, projectId: p.projectId, targetType: "purchase", targetId: p.id, dedupeKey: `pur-late:${p.id}:${ymd(t)}` });
+    if (["received", "in_use"].includes(p.status) && p.invoiceStatus !== "received" && p.invoiceStatus !== "not_needed" && p.receivedAt && t - p.receivedAt > 7 * DAY) upsert({ kind: "review", severity: "P2", title: `发票还没拿：${p.title}`, bodyMd: `订单 ${p.orderNo || "（未填）"} 到货超过 7 天，记得找商家开票。`, projectId: p.projectId, targetType: "purchase", targetId: p.id, dedupeKey: `pur-inv:${p.id}:${ymdWeek(t)}` });
+  }
+  // 合作：下一步到期 / 推进中却没有下一步
+  for (const d of db.select().from(s.deals).all()) {
+    if (["won", "lost"].includes(d.stage)) continue;
+    if (d.nextStepAt && d.nextStepAt < t) upsert({ kind: "overdue", severity: "P1", title: `合作下一步逾期：${d.title}`, bodyMd: d.nextStep || "（未写下一步）", targetType: "deal", targetId: d.id, dedupeKey: `deal-next:${d.id}:${ymd(t)}` });
+    else if (d.nextStepAt && d.nextStepAt - t <= DAY) upsert({ kind: "due", severity: "P1", title: `明天前：${d.title} — ${d.nextStep}`, bodyMd: "", targetType: "deal", targetId: d.id, dedupeKey: `deal-soon:${d.id}:${ymd(t)}` });
+    else if (!d.nextStep.trim() && t - d.updatedAt > 3 * DAY) upsert({ kind: "review", severity: "P2", title: `合作没有下一步：${d.title}`, bodyMd: "在谈的合作要写清下一步做什么、什么时候。", targetType: "deal", targetId: d.id, dedupeKey: `deal-nonext:${d.id}:${ymdWeek(t)}` });
+  }
+  // 联系人：超过约定的联系周期
+  for (const c of db.select().from(s.contacts).all()) {
+    if (!c.contactEveryDays) continue;
+    const since = t - (c.lastContactAt ?? c.createdAt);
+    if (since > c.contactEveryDays * DAY) upsert({ kind: "review", severity: "P2", title: `很久没联系：${c.name}`, bodyMd: `已 ${Math.floor(since / DAY)} 天（约定每 ${c.contactEveryDays} 天）。`, targetType: "contact", targetId: c.id, dedupeKey: `contact:${c.id}:${ymdWeek(t)}` });
+  }
+  // 行程：3 天内出发
+  for (const tr of db.select().from(s.trips).all()) {
+    if (tr.startAt > t && tr.startAt - t <= 3 * DAY) upsert({ kind: "due", severity: "P1", title: `即将出行：${tr.title}`, bodyMd: `${iso(tr.startAt)} 出发${tr.city ? `，去 ${tr.city}` : ""}。检查出行准备清单。`, projectId: tr.projectId, targetType: "trip", targetId: tr.id, dedupeKey: `trip:${tr.id}` });
+  }
   // 收件箱积压
   const inbox = db.select().from(s.projects).where(eq(s.projects.isInbox, 1)).get();
   if (inbox) {
