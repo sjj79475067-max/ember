@@ -106,7 +106,7 @@ function MobileNav({ path, unread, captures, onSearch }: { path: string; unread:
           <span className="grid size-6 place-items-center rounded-md bg-[var(--color-brand)] text-[11px] font-bold text-white">淬</span>
           <span className="text-sm font-semibold">Ember</span>
         </Link>
-        <button onClick={onSearch} className="ml-auto rounded-md p-1.5 text-[var(--color-muted)]"><Search className="size-4" /></button>
+        <button onClick={onSearch} title="搜索" aria-label="搜索" className="ml-auto rounded-md p-1.5 text-[var(--color-muted)]"><Search className="size-4" /></button>
         <ThemeToggle />
       </header>
       <nav className="fixed inset-x-0 bottom-0 z-30 flex h-14 items-stretch justify-around border-t border-[var(--color-line)] bg-[var(--color-card)]/95 backdrop-blur md:hidden">

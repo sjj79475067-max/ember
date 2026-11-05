@@ -20,7 +20,7 @@ export function DialogContent({ className, children, ...p }: React.ComponentProp
         {...p}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-[var(--color-muted)] opacity-70 hover:opacity-100 hover:bg-[var(--color-line)]/50">
+        <DialogPrimitive.Close title="关闭" aria-label="关闭" className="absolute right-4 top-4 rounded-md p-1 text-[var(--color-muted)] opacity-70 hover:opacity-100 hover:bg-[var(--color-line)]/50">
           <X className="size-4" />
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>

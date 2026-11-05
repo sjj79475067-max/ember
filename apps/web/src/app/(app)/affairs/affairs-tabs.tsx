@@ -107,7 +107,7 @@ function PurchaseDetail({ p, onClose }: { p: Record<string, any>; onClose: () =>
                   {i === 0 && <Trophy className="size-3.5 shrink-0 text-[var(--color-ok)]" />}
                   <span className="min-w-0 flex-1"><b>{x.vendor}</b>{x.model ? ` · ${x.model}` : ""}{x.notes ? <span className="text-[var(--color-muted)]"> · {x.notes}</span> : null}</span>
                   <span className="tabular-nums">{yuan(x.total)}{x.shipping ? <span className="text-[var(--color-muted)]">（含运费 {x.shipping}）</span> : null}</span>
-                  {x.url && <a href={x.url} target="_blank" rel="noreferrer" className="text-[var(--color-muted)]"><ExternalLink className="size-3.5" /></a>}
+                  {x.url && <a href={x.url} target="_blank" rel="noreferrer" title="打开商品链接" aria-label="打开商品链接" className="text-[var(--color-muted)]"><ExternalLink className="size-3.5" /></a>}
                   {p.chosenQuoteId === x.id ? <Badge tone="brand">已选</Badge> : <button onClick={() => act({ chosen_quote_id: x.id, status: ["idea", "comparing"].includes(p.status) ? "approved" : undefined }, "已选定")} className="text-[11px] text-[var(--color-brand)] hover:underline">选这家</button>}
                 </div>
               ))}
@@ -120,7 +120,7 @@ function PurchaseDetail({ p, onClose }: { p: Record<string, any>; onClose: () =>
             <Input className="h-8 text-[12px]" type="number" value={q.shipping} onChange={(e) => setQ({ ...q, shipping: e.target.value })} placeholder="运费" />
             <Input className="col-span-3 h-8 text-[12px]" value={q.url} onChange={(e) => setQ({ ...q, url: e.target.value })} placeholder="链接" />
             <Input className="col-span-2 h-8 text-[12px]" value={q.notes} onChange={(e) => setQ({ ...q, notes: e.target.value })} placeholder="备注（发货、开票…）" />
-            <Button size="sm" variant="outline" onClick={addQ}><Plus /></Button>
+            <Button size="sm" variant="outline" onClick={addQ} title="添加这条报价" aria-label="添加这条报价"><Plus /></Button>
           </div>
         </div>
         <div className="grid gap-2 rounded-lg border border-[var(--color-line)] p-2.5 sm:grid-cols-2">

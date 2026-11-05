@@ -76,7 +76,7 @@ export function SettingsClient({ providers, usage, sessions, user, base }: { pro
                   <Button size="sm" variant="ghost" onClick={() => act("test", p.id)}>测试</Button>
                   {!p.isDefault && <Button size="sm" variant="ghost" onClick={() => act("default", p.id)}>设为默认</Button>}
                   <Button size="sm" variant="ghost" onClick={() => startEdit(p)}>编辑</Button>
-                  <Button size="sm" variant="ghost" onClick={() => act("delete", p.id)}><Trash2 /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => act("delete", p.id)} title="删除这个模型" aria-label="删除这个模型"><Trash2 /></Button>
                 </div>
               </div>
             ))}

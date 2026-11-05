@@ -450,7 +450,7 @@ function Checklist({ items, allItems, parked, groups, projectId, projects, filte
         const pct = sec.stat.total ? Math.round((sec.stat.done / sec.stat.total) * 100) : 0;
         return (
           <div key={sec.id || "none"} className="mb-3 overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-card)]">
-            <button onClick={() => setCollapsed({ ...collapsed, [sec.id]: !isCollapsed })} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-[var(--color-line)]/20">
+            <button onClick={() => setCollapsed({ ...collapsed, [sec.id]: !isCollapsed })} title={isCollapsed ? "展开" : "收起"} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-[var(--color-line)]/20">
               {isCollapsed ? <ChevronRight className="size-4 text-[var(--color-muted)]" /> : <ChevronDown className="size-4 text-[var(--color-muted)]" />}
               <span className="font-medium">{sec.name}</span>
               <span className="text-[11px] text-[var(--color-muted)]">{sec.stat.done}/{sec.stat.total}</span>
@@ -545,7 +545,7 @@ function ItemSettings({ item, plan, all, onClose, onDone }: { item: Item; plan: 
             {blockers.length === 0 && <span className="text-[12px] text-[var(--color-muted)]">无</span>}
             {blockers.map((b) => {
               const t = all.find((x) => x.id === b)?.title ?? plan.foreign.find((x) => x.id === b)?.title ?? b;
-              return <span key={b} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-line)]/50 px-2 py-0.5 text-[12px]">{t}<button onClick={() => unlink(b)} className="text-[var(--color-muted)] hover:text-[var(--color-danger)]">×</button></span>;
+              return <span key={b} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-line)]/50 px-2 py-0.5 text-[12px]">{t}<button onClick={() => unlink(b)} title="移除这个前置事项" aria-label="移除这个前置事项" className="text-[var(--color-muted)] hover:text-[var(--color-danger)]">×</button></span>;
             })}
           </div>
           <select className={`${sel} mt-2 w-full`} value={newBlocker} onChange={(e) => setNewBlocker(e.target.value)}>

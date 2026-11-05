@@ -94,9 +94,9 @@ function CalendarTab({ data }: { data: AffairsData }) {
     <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
       <Card><CardContent className="p-3">
         <div className="mb-2 flex items-center justify-between">
-          <button onClick={() => go(-1)} className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronLeft className="size-4" /></button>
+          <button onClick={() => go(-1)} title="上个月" aria-label="上个月" className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronLeft className="size-4" /></button>
           <p className="text-sm font-semibold">{y} 年 {m} 月</p>
-          <button onClick={() => go(1)} className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronRight className="size-4" /></button>
+          <button onClick={() => go(1)} title="下个月" aria-label="下个月" className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronRight className="size-4" /></button>
         </div>
         <div className="keep-cols grid grid-cols-7 text-center text-[11px] text-[var(--color-muted)]">{["一", "二", "三", "四", "五", "六", "日"].map((d) => <div key={d} className="py-1">{d}</div>)}</div>
         <div className="keep-cols grid grid-cols-7 gap-px overflow-hidden rounded-lg bg-[var(--color-line)]">
@@ -148,9 +148,9 @@ function FeedCard({ data }: { data: AffairsData }) {
     <Card><CardContent className="p-3">
       <p className="text-sm font-semibold">订阅到手机日历</p>
       <p className="mt-1 text-[11px] leading-5 text-[var(--color-muted)]">iPhone：设置 → 日历 → 账户 → 添加订阅日历，粘贴链接。截止日、到期、行程都会出现在系统日历里，提前一天提醒。手机需要能访问到本机地址。</p>
-      {fresh && <div className="mt-2 flex items-center gap-1 rounded-md bg-[var(--color-line)]/40 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">{fresh}</code><button onClick={() => { navigator.clipboard.writeText(fresh); toast.success("已复制"); }}><Copy className="size-3.5" /></button></div>}
+      {fresh && <div className="mt-2 flex items-center gap-1 rounded-md bg-[var(--color-line)]/40 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">{fresh}</code><button title="复制链接" aria-label="复制链接" onClick={() => { navigator.clipboard.writeText(fresh); toast.success("已复制"); }}><Copy className="size-3.5" /></button></div>}
       {fresh && <p className="mt-1 text-[11px] text-[var(--color-warn)]">链接只显示这一次，复制保存好。</p>}
-      <div className="mt-2 flex flex-col gap-1">{data.feeds.map((f) => <div key={f.id} className="flex items-center justify-between text-[12px]"><span>{f.name} · {f.prefix}…{f.lastUsedAt ? ` · ${fmtDate(f.lastUsedAt)} 用过` : ""}</span><button onClick={() => revoke(f.id)} className="text-[var(--color-muted)] hover:text-[var(--color-danger)]"><Trash2 className="size-3.5" /></button></div>)}</div>
+      <div className="mt-2 flex flex-col gap-1">{data.feeds.map((f) => <div key={f.id} className="flex items-center justify-between text-[12px]"><span>{f.name} · {f.prefix}…{f.lastUsedAt ? ` · ${fmtDate(f.lastUsedAt)} 用过` : ""}</span><button onClick={() => revoke(f.id)} title="吊销这个订阅链接" aria-label="吊销这个订阅链接" className="text-[var(--color-muted)] hover:text-[var(--color-danger)]"><Trash2 className="size-3.5" /></button></div>)}</div>
       <Button size="sm" variant="outline" className="mt-2" onClick={mint}><Plus /> 生成订阅链接</Button>
     </CardContent></Card>
   );

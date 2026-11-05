@@ -56,9 +56,9 @@ export function ReviewClient({ data }: { data: Data }) {
           <p className="mt-1 text-sm text-[var(--color-muted)]">三步：看看这周做了什么 → 把挂着的事清一遍 → 定下周三件事。十分钟就够。</p>
         </div>
         <div className="flex items-center gap-1 text-sm">
-          <button onClick={() => router.push(`/review?week=${shift(data.week, -7)}`)} className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronLeft className="size-4" /></button>
+          <button onClick={() => router.push(`/review?week=${shift(data.week, -7)}`)} title="上一周" aria-label="上一周" className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40"><ChevronLeft className="size-4" /></button>
           <span className="tabular-nums">{data.week.slice(5)} ~ {end.slice(5)}{isCurrent && " · 本周"}</span>
-          <button disabled={isCurrent} onClick={() => router.push(`/review?week=${shift(data.week, 7)}`)} className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40 disabled:opacity-30"><ChevronRight className="size-4" /></button>
+          <button disabled={isCurrent} onClick={() => router.push(`/review?week=${shift(data.week, 7)}`)} title="下一周" aria-label="下一周" className="rounded-md p-1.5 hover:bg-[var(--color-line)]/40 disabled:opacity-30"><ChevronRight className="size-4" /></button>
         </div>
       </header>
 
@@ -132,7 +132,7 @@ export function ReviewClient({ data }: { data: Data }) {
                 <option value="">从事项里选…</option>
                 {data.options.map((o) => <option key={o.id} value={o.id}>{o.priority} {o.title}（{o.projectName}）</option>)}
               </select>
-              {x.title && <button onClick={() => setTop3(top3.map((y, j) => (j === i ? { title: "" } : y)))} className="text-[var(--color-muted)] hover:text-[var(--color-danger)]"><Trash2 className="size-4" /></button>}
+              {x.title && <button onClick={() => setTop3(top3.map((y, j) => (j === i ? { title: "" } : y)))} title="清空这一条" aria-label="清空这一条" className="text-[var(--color-muted)] hover:text-[var(--color-danger)]"><Trash2 className="size-4" /></button>}
             </div>
           ))}
           <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="一句复盘：这周哪里顺、哪里卡、下周要改什么" />

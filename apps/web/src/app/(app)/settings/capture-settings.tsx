@@ -96,8 +96,8 @@ export function CaptureSettings({ base }: { base: string }) {
               <li>把快捷指令加到主屏幕或背面轻点，说完就进 Ember 待确认。手机要能访问到这台电脑的地址。</li>
             </ol>
           </details>
-          <div className="mt-2 flex items-center gap-1 rounded-md bg-[var(--color-line)]/40 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">POST {endpoint}</code><button onClick={() => copy(endpoint)}><Copy className="size-3.5" /></button></div>
-          {key && <div className="mt-1.5 flex items-center gap-1 rounded-md bg-[var(--color-warn)]/10 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">{key}</code><button onClick={() => copy(key)}><Copy className="size-3.5" /></button></div>}
+          <div className="mt-2 flex items-center gap-1 rounded-md bg-[var(--color-line)]/40 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">POST {endpoint}</code><button onClick={() => copy(endpoint)} title="复制投递地址" aria-label="复制投递地址"><Copy className="size-3.5" /></button></div>
+          {key && <div className="mt-1.5 flex items-center gap-1 rounded-md bg-[var(--color-warn)]/10 p-1.5"><code className="min-w-0 flex-1 truncate text-[11px]">{key}</code><button onClick={() => copy(key)} title="复制密钥" aria-label="复制密钥"><Copy className="size-3.5" /></button></div>}
           {key && <p className="mt-1 text-[11px] text-[var(--color-warn)]">密钥只显示这一次。</p>}
           <div className="mt-2 flex gap-1.5">
             <Button size="sm" variant="outline" onClick={async () => { const r = await post({ action: "key_mint" }); if (r.ok) { setKey(r.key); load(); } }}>{st.captureKey.active ? "换一个密钥" : "生成密钥"}</Button>

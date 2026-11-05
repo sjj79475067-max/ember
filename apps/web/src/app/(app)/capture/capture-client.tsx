@@ -114,7 +114,7 @@ function DraftRow({ d, data }: { d: D; data: Data }) {
         <Badge tone={d.status === "confirmed" ? "ok" : "default"}>{d.status === "confirmed" ? "已落实" : "已忽略"}</Badge>
         <span className={`min-w-0 flex-1 truncate ${d.status === "rejected" ? "line-through" : ""}`}>{d.title}</span>
         {d.projectName && <span className="shrink-0 text-[11px] text-[var(--color-muted)]">{d.projectName}</span>}
-        {d.href && <Link href={d.href} className="shrink-0 text-[var(--color-brand)]"><ArrowRight className="size-3.5" /></Link>}
+        {d.href && <Link href={d.href} title="去看落到了哪里" aria-label="去看落到了哪里" className="shrink-0 text-[var(--color-brand)]"><ArrowRight className="size-3.5" /></Link>}
       </div>
     );
   }

@@ -98,7 +98,7 @@ export function RequirementsTab({ projectId, reqs, milestones }: { projectId: st
           return (
             <div key={r.id} className="border-b border-[var(--color-line)] last:border-0">
               <div className="flex items-start gap-2 p-3">
-                <button onClick={() => setOpen({ ...open, [r.id]: !isOpen })} className="mt-0.5 text-[var(--color-muted)]">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</button>
+                <button onClick={() => setOpen({ ...open, [r.id]: !isOpen })} title={isOpen ? "收起关联事项" : "展开关联事项"} aria-label={isOpen ? "收起关联事项" : "展开关联事项"} className="mt-0.5 text-[var(--color-muted)]">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</button>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-mono text-[12px] text-[var(--color-muted)]">{r.code}</span>
