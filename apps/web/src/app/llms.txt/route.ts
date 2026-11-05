@@ -38,6 +38,8 @@ export async function GET(req: NextRequest) {
     "- 写操作建议带 `expected_version`，冲突返回 409 与最新数据，请重读后再提交。",
     "- 文件不存中心：`file_register` 登记路径/链接；位置变了必须重新登记。",
     "- 同内容重复导入按指纹去重，可安全重试。",
+    "- 归属不明不要猜：`checklist_add` 省略 project、`meeting_import`/`ingest_history` 不指定项目 → 进「收件箱」，等确认归属后 `item_move` 分拣。",
+    "- 条例：agent 只能 `policy_write` 提议（进入待批准，不拦截任何操作）；只有用户在网页批准后才生效。agent 不能批准或废止条例。",
     "",
     "## 工具一览",
     ...tools.map((t) => `- **${t.name}**（${t.write ? "写" : "读"}）${t.title} — ${t.description.split("。")[0]}`),

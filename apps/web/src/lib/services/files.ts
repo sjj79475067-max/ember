@@ -62,3 +62,15 @@ export function verifyFile(id: string, input: { result: "ok" | "missing" | "move
 export function staleFiles() {
   return db.select().from(s.fileRefs).where(lt(s.fileRefs.lastVerifiedAt, nowSec() - STALE_DAYS * 86400)).all();
 }
+
+/** 资料记录换项目（随任务一起分拣时使用） */
+export function moveFile(id: string, targetProjectId: string | null, actor: Actor) {
+  const cur = db.select().from(s.fileRefs).where(eq(s.fileRefs.id, id)).get();
+  if (!cur) throw Object.assign(new Error("资料记录不存在"), { status: 404 });
+  if (!targetProjectId) throw Object.assign(new Error("请指定目标项目"), { status: 422 });
+  const target = db.select().from(s.projects).where(sql`${s.projects.id}=${targetProjectId} or lower(${s.projects.key})=lower(${targetProjectId})`).get();
+  if (!target) throw Object.assign(new Error(`目标项目「${targetProjectId}」不存在`), { status: 404 });
+  db.update(s.fileRefs).set({ projectId: target.id, updatedAt: nowSec() }).where(eq(s.fileRefs.id, id)).run();
+  audit(actor, "file.move", "file", id, { from: cur.projectId, to: target.id });
+  return { file: db.select().from(s.fileRefs).where(eq(s.fileRefs.id, id)).get()!, project: { key: target.key, name: target.name } };
+}

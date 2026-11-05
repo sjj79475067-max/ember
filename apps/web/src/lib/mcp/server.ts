@@ -30,6 +30,8 @@ export function buildServer(ctx: Ctx) {
     const def = toolsByName.get(req.params.name);
     if (!def) return { isError: true, content: [{ type: "text", text: `未知工具：${req.params.name}。可用工具：${tools.map((t) => t.name).join(", ")}` }] };
     try {
+      if (def.write && ctx.isAgent && !(ctx.scopes ?? []).includes("write"))
+        throw Object.assign(new Error("该 Token 只有只读权限，不能执行写操作"), { status: 403 });
       const parsed = def.input.parse(req.params.arguments ?? {});
       const out = await def.handler(parsed, ctx);
       return { content: [{ type: "text", text: JSON.stringify(out) }] };

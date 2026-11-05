@@ -42,6 +42,13 @@ export async function ingest(input: IngestInput, actor: Actor, ip = "") {
       }
     }
   }
+  // 无 AI 或 AI 未产出时，用确定性规则抽取，保证归集后清单不为空
+  if (!items.length && input.createItems !== false) {
+    const { extractDeterministic } = await import("@/lib/ai/rules");
+    const d = extractDeterministic(input.text, Date.now());
+    items = d.items;
+    if (!summary) summary = d.summary;
+  }
   if (!summary) summary = input.text.replace(/\s+/g, " ").slice(0, 300);
 
   const batchId = newId("imp");

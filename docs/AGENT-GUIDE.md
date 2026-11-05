@@ -20,8 +20,8 @@
 ## 2. Agent 的标准工作流
 
 1. `onboard` —— 身份、项目、提醒、条例、工作流。
-2. `policy_read` → `policy_ack` —— 有必读条例时（否则写操作被拦）。
-3. `project_list` / `project_get` —— 确认项目。
+2. `policy_read` → `policy_ack` —— 有必读条例时（否则对应写操作被拦）。条例只能提议（`policy_write`，进入待批准），由用户批准。
+3. `project_list` / `project_get` —— 确认项目。**归属不明不要猜**：任务省略 project、会议/历史不指定项目 → 自动进「收件箱」，之后用 `item_move` 分拣。
 4. `checklist_list(status=open)` —— 看真实进度，不凭记忆。
 5. `claim_item` —— 认领（冲突时先问用户）。
 6. 做事，期间：会议用 `meeting_import`；决定用 `decision_record`；知识用 `note_save`；产物用 `file_register`。
@@ -34,6 +34,8 @@
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 403 policy_gate | 有未确认的必读条例 | `policy_read` + `policy_ack` |
+| 404 找不到项目 | 代号写错或项目不存在 | `project_list` 确认；不确定就用收件箱 |
+| policy_write 返回 pending | 正常：条例需用户在网页批准 | 告知用户去「条例」页批准 |
 | 409 版本冲突 | 他人已改 | 重新 `checklist_list` 取最新 version |
 | 422 必须提供 evidence | done 无证据 | 补写做了什么、如何验证 |
 | conflict=true（认领） | 他人 2 小时内已认领 | 询问用户或换任务 |

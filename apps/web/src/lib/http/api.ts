@@ -5,7 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 import type { Actor } from "@/lib/audit";
 import { newId } from "@/lib/id";
 
-export type Ctx = { actor: Actor; ip: string; requestId: string; tokenId?: string; sessionId?: string; isAgent: boolean };
+export type Ctx = { actor: Actor; ip: string; requestId: string; tokenId?: string; sessionId?: string; isAgent: boolean; scopes?: string[] };
 
 export class ApiError extends Error {
   status: number;
@@ -38,13 +38,13 @@ export async function withAgent(req: NextRequest, handler: (ctx: Ctx) => Promise
       if (opts.write && !auth.scopes.includes("write")) throw new ApiError(403, "该 Token 没有写权限（缺少 write scope）");
       return await handler({
         actor: { type: "agent", name: auth.agentName }, ip, requestId, tokenId: auth.tokenId,
-        sessionId: req.headers.get("x-agent-session") ?? undefined, isAgent: true,
+        sessionId: req.headers.get("x-agent-session") ?? undefined, isAgent: true, scopes: auth.scopes,
       });
     }
     const user = await getSessionUser();
     if (!user) throw new ApiError(401, "未认证：请提供 Authorization: Bearer <agent token>，或以网页登录会话访问");
     if (opts.write && user.role === "client") throw new ApiError(403, "只读账号不能写操作");
-    return await handler({ actor: { type: "user", name: user.name }, ip, requestId, isAgent: false });
+    return await handler({ actor: { type: "user", name: user.name }, ip, requestId, isAgent: false, scopes: ["read", "write"] });
   } catch (e) {
     return errorResponse(e);
   }

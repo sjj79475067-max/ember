@@ -27,6 +27,7 @@ async function handle(req: NextRequest) {
     tokenId,
     sessionId: req.headers.get("x-agent-session") ?? undefined,
     isAgent: auth != null,
+    scopes: auth?.scopes ?? ["read", "write"],
   };
 
   const server = buildServer(ctx);

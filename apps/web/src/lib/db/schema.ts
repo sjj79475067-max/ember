@@ -42,6 +42,8 @@ export const projects = sqliteTable("projects", {
   key: text().notNull().unique(), // IT, ADMIN-FIN ...
   name: text().notNull(),
   kind: text({ enum: ["it", "admin", "client", "knowledge"] }).notNull().default("admin"),
+  isInbox: integer().notNull().default(0), // 1 = 收件箱（只此一个，未归类内容先进这里）
+  aliases: text().notNull().default(""), // 逗号分隔的历史代号/别称，便于老 agent 用旧代号仍能命中
   status: text({ enum: ["active", "paused", "done", "archived"] }).notNull().default("active"),
   summaryMd: text().notNull().default(""),
   dueAt: integer(),
@@ -66,6 +68,7 @@ export const items = sqliteTable("items", {
   id: text().primaryKey(),
   projectId: text().notNull(),
   workstreamId: text(),
+  parkingLot: integer(),
   parentId: text(),
   title: text().notNull(),
   detailMd: text().notNull().default(""),
@@ -79,6 +82,7 @@ export const items = sqliteTable("items", {
   claimedAt: integer(),
   claimNote: text().notNull().default(""),
   sourceType: text({ enum: ["meeting", "decision", "import", "manual", "agent"] }).notNull().default("manual"),
+  sourceProjectKey: text().notNull().default(""), // 从别的项目拆出来/移动过来时记录来源
   sourceRef: text().notNull().default(""),
   position: integer().notNull().default(0),
   version: integer().notNull().default(1),
@@ -189,6 +193,16 @@ export const policies = sqliteTable("policies", {
   version: integer().notNull().default(1),
   required: integer().notNull().default(0),
   appliesToTools: text().notNull().default(""),
+  // draft=起草中(agent 写的不生效) pending=待批准 active=生效 retired=已废止
+  status: text({ enum: ["draft", "pending", "active", "retired"] }).notNull().default("active"),
+  purpose: text().notNull().default(""),   // 这条规矩管什么、依据是什么
+  scopeMode: text({ enum: ["tools", "all"] }).notNull().default("tools"), // all = 所有写操作（需用户批准）
+  expiresAt: integer(),
+  reviewEveryDays: integer(),
+  lastReviewedAt: integer(),
+  proposedBy: text().notNull().default(""),
+  approvedBy: text().notNull().default(""),
+  approvedAt: integer(),
   active: integer().notNull().default(1),
   createdAt: now(),
   updatedAt: now(),

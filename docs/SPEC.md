@@ -58,11 +58,26 @@
 4. 自描述：`/llms.txt`（概览）、`/llms-full.txt`（全量手册+每个工具 schema+场景配方）、`/.well-known/agent.json`（机器可读能力清单）、`/openapi.json`。
 5. 变更通知：`agent_changelog` 表 → onboard 的 `since_last_time`；工具描述变更同步更新 `llms-full.txt`。
 
-## 5. 条例门禁
+## 5. 条例门禁与写入限制
 
-- `required=1` 的条例，作用域为全局或指定项目；`appliesToTools` 为空表示所有写工具。
-- 写工具调用前检查：项目作用域内存在必读且当前 actor 未确认当前版本 → 403，信封附 `policy_gate.policies`。
-- 条例内容修改 → `version+1` → 所有 actor 需重新确认。
+**生命周期**：`draft` 草稿 → `pending` 待批准 → `active` 生效 → `retired` 废止（另有过期自动失效）。
+- 用户在网页保存即生效；**agent 只能 `policy_write` 提议，一律进入 pending，不拦截任何操作**；批准 / 废止只能由用户在网页操作。
+- 内容修改 → `version+1` → 需重新确认；agent 修改生效中的条例 → 回到 pending。
+
+**硬约束（服务端强制，不依赖 UI）**
+- 正文 ≤ 2000 字，标题 ≤ 80 字。
+- 必读（required）条例**必须**用 `applies_to_tools` 限定到具体写操作；要全站生效必须显式 `scope_mode=all`（只有用户能批准）。
+- 同一范围（全局 / 单个项目）最多 5 条生效且无过期的必读条例。
+- 支持 `expires_at`（到期自动失效）与 `review_every_days`（到期未复核产生提醒）。
+
+**门禁规则**：只检查生效中（active 且未过期）的必读条例；项目条例只拦该项目的写操作，工具型只拦其中列出的写操作，只读工具永远不拦。未确认 → 403 + `policy_gate.policies`。
+
+## 5.1 防止交叉与混乱的结构
+
+- **收件箱（INBOX）**：唯一的未归类项目。`checklist_add` 省略 project、`meeting_import` / `ingest_history` 不指定项目 → 落进收件箱并标记为 `parkingLot`，不计入任何项目进度；`item_move` 分拣到具体项目或合并 `item_merge`。
+- **项目解析**：id / key（不区分大小写）/ 别名，别名的中文「收件箱」也可用；找不到项目时**报错并列出可用项目**，绝不静默写进别的项目。
+- **项目分组**：`project_groups` 设置分组，任务用 `group` 参数挂靠；界面按分组折叠，长清单不再糊成一坨。
+- **写权限**：token 的 `write` scope 在 MCP 与 REST 两条通道都强制校验。
 
 ## 6. 提醒引擎
 

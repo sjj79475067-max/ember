@@ -23,7 +23,7 @@ const DAY = 86400;
 
 export function refreshReminders() {
   const t = nowSec();
-  const openItems = db.select().from(s.items).where(sql`${s.items.status} in ('todo','doing','blocked','changed')`).all();
+  const openItems = db.select().from(s.items).where(sql`(${s.items.status} in ('todo','doing','blocked','changed')) and ${s.items.parkingLot} is null`).all();
   for (const it of openItems) {
     const dueIn = it.dueAt ? it.dueAt - t : null;
     if (it.dueAt && dueIn! < 0) {
@@ -45,13 +45,37 @@ export function refreshReminders() {
   for (const p of expiring) {
     upsert({ kind: "policy", severity: "P1", title: `条例待确认：${p.title}`, bodyMd: `版本 v${p.version}，请先阅读再操作`, projectId: p.projectId, targetType: "policy", targetId: p.id, dedupeKey: `policy:${p.id}:v${p.version}` });
   }
+  // 条例生命周期：待批准 / 将过期 / 该复核
+  const allPolicies = db.select().from(s.policies).where(eq(s.policies.active, 1)).all();
+  for (const p of allPolicies) {
+    if (p.status === "pending") {
+      upsert({ kind: "review", severity: "P1", title: `条例待批准：${p.title}`, bodyMd: `由 ${p.proposedBy || "agent"} 起草，${p.required ? "设为必读，" : ""}批准后才生效。到「条例」页审阅。`, projectId: p.projectId, targetType: "policy", targetId: p.id, dedupeKey: `policy-pending:${p.id}:v${p.version}` });
+    }
+    if (p.status === "active" && p.expiresAt && p.expiresAt > t && p.expiresAt - t <= 7 * DAY) {
+      upsert({ kind: "review", severity: "P2", title: `条例即将过期：${p.title}`, bodyMd: `${iso(p.expiresAt)} 到期；到期后自动失效。如仍需要请续期。`, projectId: p.projectId, targetType: "policy", targetId: p.id, dedupeKey: `policy-expiring:${p.id}:${ymdWeek(t)}` });
+    }
+    if (p.status === "active" && p.reviewEveryDays) {
+      const last = p.lastReviewedAt ?? p.approvedAt ?? p.updatedAt;
+      if (t - last > p.reviewEveryDays * DAY) {
+        upsert({ kind: "review", severity: "P2", title: `条例该复核了：${p.title}`, bodyMd: `已 ${Math.floor((t - last) / DAY)} 天未复核（周期 ${p.reviewEveryDays} 天）。确认仍然适用，或废止。`, projectId: p.projectId, targetType: "policy", targetId: p.id, dedupeKey: `policy-review:${p.id}:${ymdWeek(t)}` });
+      }
+    }
+  }
+  // 收件箱积压
+  const inbox = db.select().from(s.projects).where(eq(s.projects.isInbox, 1)).get();
+  if (inbox) {
+    const parked = db.select({ n: sql<number>`count(*)` }).from(s.items).where(and(eq(s.items.projectId, inbox.id), sql`${s.items.status} in ('todo','doing','blocked','changed')`)).get()?.n ?? 0;
+    if (parked > 0) upsert({ kind: "review", severity: "P2", title: `收件箱有 ${parked} 条待分拣`, bodyMd: "这些任务还没归属项目，不会出现在项目进度里。请分拣到对应项目，或交给 agent 处理。", projectId: inbox.id, targetType: "project", targetId: inbox.id, dedupeKey: `inbox:${ymd(t)}` });
+  }
   return countOpen();
 }
 
 export function listUnackedPolicies() {
-  const ps = db.select().from(s.policies).where(and(eq(s.policies.required, 1), eq(s.policies.active, 1))).all();
+  const t = nowSec();
+  const ps = db.select().from(s.policies).where(and(eq(s.policies.required, 1), eq(s.policies.active, 1), eq(s.policies.status, "active"))).all()
+    .filter((p) => !p.expiresAt || p.expiresAt > t);
   const acks = db.select().from(s.policyAcks).all();
-  return ps.filter((p) => !acks.some((a) => a.policyId === p.id && a.policyVersion === p.version));
+  return ps.filter((p) => !acks.some((a) => a.policyId === p.id && a.policyVersion === p.version && a.actorName === "*"));
 }
 
 export function countOpen() {

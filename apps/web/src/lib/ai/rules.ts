@@ -37,7 +37,7 @@ export function extractDeterministic(text: string, now = Date.now()): { title: s
     const hasCue = ACTION_CUE.test(cleaned);
     const bulletOrNumbered = /^([-*•·>]|\d+[.、)）]|\[\s?[xX✓]?\s?\])/.test(line);
     if (bulletOrNumbered && cjk >= 4 && cleaned.length >= 6 && !META_PREFIX.test(cleaned)) {
-      const t0 = stripDue(cleaned, now).slice(0, 120);
+      const t0 = stripDue(cleaned, now).replace(/^.*?[。；！!?]\s*/, "").slice(0, 120) || stripDue(cleaned, now).slice(0, 120);
       if (t0 && !seen.has(t0)) {
         seen.add(t0);
         const owner0 = cleaned.match(OWNER_RE)?.[1];
@@ -52,7 +52,8 @@ export function extractDeterministic(text: string, now = Date.now()): { title: s
 
     const due = parseDue(cleaned, now);
     const owner = cleaned.match(OWNER_RE)?.[1];
-    const t = stripDue(cleaned, now).replace(/\s{2,}/g, " ").slice(0, 120);
+    const stripped = stripDue(cleaned, now).replace(/\s{2,}/g, " ");
+    const t = (stripped.replace(/^.*?[。；！!?]\s*/, "") || stripped).slice(0, 120);
     if (seen.has(t)) continue;
     seen.add(t);
     items.push({

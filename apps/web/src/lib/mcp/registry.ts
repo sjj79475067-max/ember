@@ -1,13 +1,16 @@
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import type { Ctx } from "@/lib/http/api";
-import { listProjects, getProject, createProject, updateProject } from "@/lib/services/projects";
-import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor } from "@/lib/services/items";
+import { listProjects, getProject, createProject, updateProject, resolveProjectOrNull, getInbox } from "@/lib/services/projects";
+import { addItems, listItems, updateItem, claimItem, releaseItem, verifyChecklist, progressFor, moveItem, mergeItems } from "@/lib/services/items";
+import { moveFile } from "@/lib/services/files";
+import { setProjectGroups, listGroups, ensureGroup, setItemGroup } from "@/lib/services/boards";
 import { createMeeting, getMeeting, listMeetings } from "@/lib/services/meetings";
 import { ingest } from "@/lib/services/ingest";
 import { upsertNote, createDecision, listNotes, listDecisions } from "@/lib/services/notes";
 import { registerFile, verifyFile, listFiles } from "@/lib/services/files";
 import { pullReminders, ackReminders, pendingSummary } from "@/lib/services/reminders";
-import { listPolicies, ackPolicy, upsertPolicy, policyGate } from "@/lib/services/policies";
+import { listPolicies, ackPolicy, upsertPolicy, policyGate, isLive, WRITE_TOOLS } from "@/lib/services/policies";
 import { search } from "@/lib/services/search";
 import { agentOnboard } from "@/lib/services/onboard";
 import { openSession, closeSession, heartbeat, listSessions } from "@/lib/services/agents";
@@ -30,7 +33,7 @@ function envelope(data: Record<string, unknown>, hints?: string[]) {
   const rem = pendingSummary();
   const policies = db.select().from(s.policies).all();
   const acks = db.select().from(s.policyAcks).all();
-  const unacked = policies.filter((p) => p.active && p.required && !acks.some((a) => a.policyId === p.id && a.policyVersion === p.version));
+  const unacked = policies.filter((p) => isLive(p) && p.required && !acks.some((a) => a.policyId === p.id && a.policyVersion === p.version));
   return {
     ok: true,
     data,
@@ -50,24 +53,18 @@ export function markPolicyAcked(actorName: string, policyId: string) {
   ackCache.set(`${actorName}:${policyId}`, Date.now() + 10 * 60_000);
 }
 
-function gate(ctx: Ctx, projectId: string | null, tool: string) {
-  const g = policyGate(projectId, tool, ctx.actor.name);
-  if (g) {
-    throw Object.assign(
-      new Error(`${g.reason}：${g.policies.map((p) => `${p.title}(v${p.version})`).join("、")}`),
-      { status: 403, policy_gate: g },
-    );
-  }
-  const ca = policyGate(null, tool, ctx.actor.name);
-  if (ca) {
-    const remaining = ca.policies.filter((p) => (ackCache.get(`${ctx.actor.name}:${p.id}`) ?? 0) < Date.now());
-    if (remaining.length) {
-      throw Object.assign(
-        new Error(`存在未确认的必读条例，请先调用 policy_read + policy_ack：${remaining.map((p) => `${p.title}(v${p.version})`).join("、")}`),
-        { status: 403, policy_gate: { reason: "policy_unacked", policies: remaining } },
-      );
-    }
-  }
+/** 写操作前检查：项目条例（仅该项目）+ 全局条例（所有写操作）；非写工具不受限 */
+function gate(ctx: Ctx, projectId: string | null | undefined, tool: string) {
+  if (!WRITE_TOOLS.includes(tool)) return;
+  let g = policyGate(projectId ?? null, tool, ctx.actor.name);
+  if (!g) return;
+  // 全局条例（scope_mode=all）在首次确认本进程内放行，避免同一会话反复被拦
+  const remaining = g.policies.filter((p) => (ackCache.get(`${ctx.actor.name}:${p.id}`) ?? 0) < Date.now());
+  if (!remaining.length) return;
+  throw Object.assign(
+    new Error(`${g.reason}：${remaining.map((p) => `${p.title}(v${p.version})`).join("、")}。请先 policy_read 再 policy_ack。`),
+    { status: 403, policy_gate: { reason: "policy_unacked", policies: remaining } },
+  );
 }
 
 export const tools: ToolDef[] = [
@@ -111,9 +108,8 @@ export const tools: ToolDef[] = [
     description: "按 id 或 key（如 IT、ADMIN）获取项目：清单、工作流、资料位置、最近会议与决定、项目条例、进度。",
     input: z.object({ project: z.string().describe("项目 id 或 key") }),
     handler: async (i) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
-      return envelope({ project: p, progress: progressFor(p.id) });
+      const p = resolveProjectOrNull(i.project);
+      return envelope({ project: p, progress: progressFor(p!.id) });
     },
   },
   {
@@ -147,18 +143,27 @@ export const tools: ToolDef[] = [
       status: z.enum(["todo", "doing", "blocked", "done", "dropped", "changed", "open"]).optional(),
       due_before: iso.optional(),
       q: z.string().optional(),
+      group: z.string().optional().describe("按分组名过滤"),
       limit: z.number().int().min(1).max(200).optional(),
       cursor: z.number().int().optional(),
     }),
     handler: async (i) => {
       let projectId = i.project;
-      if (projectId) projectId = getProject(projectId)?.id ?? projectId;
+      if (projectId) projectId = getProject(projectId)?.id ?? "__missing__";
+      if (projectId === "__missing__") throw Object.assign(new Error(`找不到项目「${i.project}」，请先 project_list 确认代号`), { status: 404 });
       const res = listItems({ projectId, status: i.status as never, dueBefore: i.due_before, q: i.q, limit: i.limit, cursor: i.cursor });
+      const groups = new Map<string, string>();
+      if (res.items.length) {
+        const ws = db.select().from(s.workstreams).all();
+        for (const w of ws) groups.set(w.id, w.name);
+      }
+      const rows = i.group ? res.items.filter((it) => groups.get(it.workstreamId ?? "") === i.group) : res.items;
       return envelope({
-        items: res.items.map((it) => ({
+        items: rows.map((it) => ({
           id: it.id, title: it.title, status: it.status, priority: it.priority, due_at: it.dueAt,
           done_definition: it.doneDefinition, claimed_by: it.claimedBy || null, version: it.version,
           evidence: it.evidence || undefined, block_reason: it.blockReason || undefined,
+          group: groups.get(it.workstreamId ?? "") ?? null,
         })),
         next_cursor: res.nextCursor,
       });
@@ -167,10 +172,10 @@ export const tools: ToolDef[] = [
   {
     name: "checklist_add",
     title: "添加任务",
-    description: "批量添加任务（1-50 条）。每条写清 title（动词开头）、done_definition（可验收的完成标准）、due_at（如有）。会议衍生的任务请用 meeting_import 自动抽取。",
+    description: "批量添加任务（1-50 条）。每条写清 title（动词开头）、done_definition（可验收的完成标准）、due_at（如有）。不确定属于哪个项目时省略 project，任务会进「收件箱」待分拣，不会乱写进某个项目。返回里会回显写入的项目。",
     write: true,
     input: z.object({
-      project: z.string(),
+      project: z.string().optional().describe("项目 id 或 key；省略则进收件箱"),
       items: z.array(z.object({
         title: z.string(),
         detail_md: z.string().optional(),
@@ -178,17 +183,21 @@ export const tools: ToolDef[] = [
         priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
         due_at: iso.optional(),
         parent_id: z.string().optional(),
+        group: z.string().optional().describe("分组名（如 交付/内部/外部依赖），不存在会自动创建"),
       })).min(1).max(50),
     }),
     handler: async (i, ctx) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
-      gate(ctx, p.id, "checklist_add");
-      const res = addItems(p.id, i.items.map((x: Record<string, string>) => ({
+      const p = i.project ? resolveProjectOrNull(i.project) : getInbox();
+      gate(ctx, p!.isInbox ? null : p!.id, "checklist_add");
+      const res = addItems(p!.id, i.items.map((x: Record<string, string>) => ({
         title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition,
         priority: x.priority as never, dueAt: x.due_at as never, parentId: x.parent_id, sourceType: "agent" as const,
+        workstreamId: x.group ? ensureGroup(p!.id, x.group).id : null,
       })), ctx.actor, ctx.ip);
-      return envelope({ ids: res.ids, progress: res.progress }, ["建议随后调用 checklist_list 确认已落库。"]);
+      const hints = [`已写入项目：${p!.key}（${p!.name}）`];
+      if (p!.isInbox) hints.push("这些任务在收件箱。确认归属后调用 item_move 分拣到具体项目。");
+      else hints.push("建议随后调用 checklist_list 确认已落库。");
+      return envelope({ ids: res.ids, project: { id: p!.id, key: p!.key, name: p!.name }, progress: res.progress }, hints);
     },
   },
   {
@@ -207,6 +216,7 @@ export const tools: ToolDef[] = [
       priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
       expected_version: z.number().int().optional(),
       session_id: z.string().optional(),
+      group: z.string().nullable().optional().describe("改到某个分组；传 null 移出分组"),
     }),
     handler: async (i, ctx) => {
       const before = db.select().from(s.items).all().find((x) => x.id === i.item_id);
@@ -214,10 +224,14 @@ export const tools: ToolDef[] = [
       if (i.status === "done" && !(i.evidence || i.note)) throw Object.assign(new Error("验收失败：status=done 必须提供 evidence（做了什么、如何验证）"), { status: 422 });
       if (i.status === "blocked" && !i.block_reason) throw Object.assign(new Error("请提供 block_reason 说明卡在哪里、需要谁做什么"), { status: 422 });
       try {
-        const res = updateItem(i.item_id, {
+        let res = updateItem(i.item_id, {
           status: i.status as never, note: i.note, evidence: i.evidence, blockReason: i.block_reason,
           dueAt: i.due_at as never, priority: i.priority as never, expectedVersion: i.expected_version,
         }, ctx.actor, i.session_id, ctx.ip);
+        if (i.group !== undefined) {
+          setItemGroup(i.item_id, i.group);
+          res.item = db.select().from(s.items).where(eq(s.items.id, i.item_id)).get()!;
+        }
         return envelope({ item: res.item, progress: res.progress });
       } catch (e) {
         const err = e as Error & { status?: number; current?: unknown };
@@ -256,9 +270,8 @@ export const tools: ToolDef[] = [
       "收工前自查：返回项目进度 + 所有问题项（done 无证据、blocked 无原因、认领超时、已逾期）。把这些 gaps 全部处理后再结束会话。",
     input: z.object({ project: z.string() }),
     handler: async (i) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
-      return envelope(verifyChecklist(p.id));
+      const p = resolveProjectOrNull(i.project);
+      return envelope(verifyChecklist(p!.id));
     },
   },
   {
@@ -282,16 +295,15 @@ export const tools: ToolDef[] = [
       parse_with_ai: z.boolean().optional(),
     }),
     handler: async (i, ctx) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
-      gate(ctx, p.id, "meeting_import");
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.id, "meeting_import");
       const r = await createMeeting({
-        projectId: p.id, title: i.title ?? "会议记录", heldAt: i.held_at, participants: i.participants,
+        projectId: p!.id, title: i.title ?? "会议记录", heldAt: i.held_at, participants: i.participants,
         source: i.source ?? "agent", minutesMd: i.text, attachments: i.attachments,
         items: i.items?.map((x: Record<string, unknown>) => ({ title: x.title, detailMd: x.detail_md, doneDefinition: x.done_definition, dueAt: x.due_at, priority: x.priority })) as never,
         parseWithAi: i.parse_with_ai,
       }, ctx.actor, ctx.ip);
-      return envelope({ meeting_id: r.meeting?.id, deduped: r.deduped, created_item_ids: r.createdItemIds, summary: r.meeting?.summaryMd });
+      return envelope({ meeting_id: r.meeting?.id, project: { key: p!.key, name: p!.name }, deduped: r.deduped, created_item_ids: r.createdItemIds, summary: r.meeting?.summaryMd });
     },
   },
   {
@@ -308,9 +320,10 @@ export const tools: ToolDef[] = [
       create_items: z.boolean().optional(),
     }),
     handler: async (i, ctx) => {
-      const p = i.project ? getProject(i.project) : null;
-      const r = await ingest({ projectId: p?.id, kind: i.kind, title: i.title, text: i.text, source: i.source ?? "agent-history", createItems: i.create_items }, ctx.actor, ctx.ip);
-      return envelope(r);
+      const p = i.project ? resolveProjectOrNull(i.project) : getInbox();
+      gate(ctx, p!.isInbox ? null : p!.id, "ingest_history");
+      const r = await ingest({ projectId: p!.id, kind: i.kind, title: i.title, text: i.text, source: i.source ?? "agent-history", createItems: i.create_items }, ctx.actor, ctx.ip);
+      return envelope({ ...r, project: { key: p!.key, name: p!.name } }, p!.isInbox ? ["已进收件箱，请用 item_move 分拣。"] : []);
     },
   },
   {
@@ -320,9 +333,9 @@ export const tools: ToolDef[] = [
     write: true,
     input: z.object({ id: z.string().optional(), project: z.string().optional(), title: z.string(), body_md: z.string().optional(), tags: z.string().optional() }),
     handler: async (i, ctx) => {
-      const p = i.project ? getProject(i.project) : null;
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
       const n = upsertNote({ id: i.id, projectId: p?.id ?? null, title: i.title, bodyMd: i.body_md, tags: i.tags, source: ctx.actor.name }, ctx.actor);
-      return envelope({ note: n });
+      return envelope({ note: n, project: p ? { key: p.key, name: p.name } : null });
     },
   },
   {
@@ -332,10 +345,10 @@ export const tools: ToolDef[] = [
     write: true,
     input: z.object({ project: z.string(), title: z.string(), rationale_md: z.string().optional(), impact: z.string().optional() }),
     handler: async (i, ctx) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
-      const d = createDecision({ projectId: p.id, title: i.title, rationaleMd: i.rationale_md, impact: i.impact }, ctx.actor);
-      return envelope({ decision: d });
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.isInbox ? null : p!.id, "decision_record");
+      const d = createDecision({ projectId: p!.id, title: i.title, rationaleMd: i.rationale_md, impact: i.impact }, ctx.actor);
+      return envelope({ decision: d, project: { key: p!.key, name: p!.name } });
     },
   },
   {
@@ -352,13 +365,13 @@ export const tools: ToolDef[] = [
       size_bytes: z.number().int().optional(), note: z.string().optional(), verify: z.boolean().optional(),
     }),
     handler: async (i, ctx) => {
-      const p = getProject(i.project);
-      if (!p) throw Object.assign(new Error("项目不存在"), { status: 404 });
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.isInbox ? null : p!.id, "file_register");
       const f = registerFile({
-        projectId: p.id, itemId: i.item_id, label: i.label, machine: i.machine, path: i.path, url: i.url,
+        projectId: p!.id, itemId: i.item_id, label: i.label, machine: i.machine, path: i.path, url: i.url,
         kind: i.kind, archiveTo: i.archive_to, sizeBytes: i.size_bytes, note: i.note,
       }, ctx.actor, i.verify);
-      return envelope({ file: f });
+      return envelope({ file: f, project: { key: p!.key, name: p!.name } });
     },
   },
   {
@@ -375,7 +388,7 @@ export const tools: ToolDef[] = [
     description: "按项目列出资料位置及核验状态（stale=超过 30 天未核验）。",
     input: z.object({ project: z.string().optional(), stale_only: z.boolean().optional() }),
     handler: async (i) => {
-      const p = i.project ? getProject(i.project) : null;
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
       return envelope({ files: listFiles({ projectId: p?.id, staleOnly: i.stale_only }) });
     },
   },
@@ -386,7 +399,7 @@ export const tools: ToolDef[] = [
     input: z.object({ project: z.string().optional(), include_acked: z.boolean().optional() }),
     handler: async (i, ctx) => {
       void ctx;
-      const p = i.project ? getProject(i.project) : null;
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
       const rows = pullReminders({ projectId: p?.id, includeAcked: i.include_acked });
       return envelope({ reminders: rows });
     },
@@ -402,37 +415,101 @@ export const tools: ToolDef[] = [
   {
     name: "policy_read",
     title: "读取条例",
-    description: "读取 AI 管理条例全文（全局 + 指定项目）。条例是用户对 agent 的硬性要求，必须遵守。",
-    input: z.object({ project: z.string().optional(), policy_id: z.string().optional() }),
+    description:
+      "读取条例全文（全局 + 指定项目）。只返回生效中的条例（状态 active 且未过期），并标注 required（必读）与生效工具。条例是用户对 agent 的硬性要求，必须遵守。",
+    input: z.object({ project: z.string().optional(), policy_id: z.string().optional(), include_pending: z.boolean().optional().describe("同时查看待批准的条例") }),
     handler: async (i) => {
-      const p = i.project ? getProject(i.project) : null;
-      let rows = listPolicies(p?.id);
-      if (i.policy_id) rows = rows.filter((r) => r.id === i.policy_id);
-      return envelope({ policies: rows });
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      const rows = listPolicies(p?.id).filter((r) => r.live || (i.include_pending && (r.status === "pending" || r.status === "draft")));
+      const selected = i.policy_id ? rows.filter((r) => r.id === i.policy_id) : rows;
+      return envelope({ policies: selected.map((r) => ({ id: r.id, title: r.title, body_md: r.bodyMd, version: r.version, required: !!r.required, status: r.status, applies_to_tools: r.tools, scope_mode: r.scopeMode, expires_at: r.expiresAt, purpose: r.purpose })) });
     },
   },
   {
     name: "policy_ack",
     title: "确认已读条例",
-    description: "确认你已阅读条例当前版本。未确认的必读条例会阻止写操作。",
+    description: "确认你已阅读条例当前版本。未确认的必读条例会阻止对应写操作。只能确认生效中的条例。",
     write: true,
     input: z.object({ policy_id: z.string() }),
     handler: async (i, ctx) => {
       const r = ackPolicy(i.policy_id, ctx.actor.name);
-      db.insert(s.policyAcks).values({ id: newId("pak"), policyId: i.policy_id, policyVersion: r.version, actorType: "agent", actorName: "*", createdAt: Math.floor(Date.now() / 1000) }).onConflictDoNothing().run();
       markPolicyAcked(ctx.actor.name, i.policy_id);
       return envelope(r);
     },
   },
   {
     name: "policy_write",
-    title: "新增/更新条例",
-    description: "用户口述规则时写入中心。required=true 表示 agent 写操作前必须确认。applies_to_tools 逗号分隔（如 checklist_update,meeting_import）。",
+    title: "提议条例（需用户在网页批准）",
+    description:
+      "用户口述了一条规矩时调用。你写的条例只会变成「待批准」，不会拦截任何操作；必须由用户在网页「条例」页批准后才生效。正文最多 2000 字，必读条例必须用 applies_to_tools 限定到具体写操作。",
     write: true,
-    input: z.object({ id: z.string().optional(), project: z.string().optional(), title: z.string(), body_md: z.string(), required: z.boolean().optional(), applies_to_tools: z.string().optional() }),
+    input: z.object({
+      id: z.string().optional().describe("传 id 表示修订已有条例"),
+      project: z.string().optional().describe("项目条例；省略为全局条例"),
+      title: z.string(),
+      body_md: z.string().max(2000),
+      required: z.boolean().optional().describe("是否必读（会拦截写操作）"),
+      applies_to_tools: z.string().optional().describe(`限定工具，逗号分隔，可选：${WRITE_TOOLS.join(",")}`),
+      scope_mode: z.enum(["tools", "all"]).optional().describe("all=所有写操作（需用户批准）"),
+      purpose: z.string().optional().describe("这条规矩管什么、依据是什么，方便用户判断"),
+      expires_at: iso.optional(),
+      review_every_days: z.number().int().optional(),
+    }),
     handler: async (i, ctx) => {
-      const p = i.project ? getProject(i.project) : null;
-      return envelope({ policy: upsertPolicy({ id: i.id, projectId: p?.id ?? null, title: i.title, bodyMd: i.body_md, required: i.required, appliesToTools: i.applies_to_tools }, ctx.actor) });
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      const r = upsertPolicy({ id: i.id, projectId: p?.id ?? null, title: i.title, bodyMd: i.body_md, required: i.required, appliesToTools: i.applies_to_tools, scopeMode: i.scope_mode, purpose: i.purpose, expiresAt: i.expires_at ?? null, reviewEveryDays: i.review_every_days }, ctx.actor);
+      return envelope({ policy: { id: r.id, title: r.title, status: r.status, version: r.version }, project: p ? { key: p.key, name: p.name } : null }, ["条例已提交为「待批准」，需用户在网页 条例 页点批准后才会生效（当前不影响任何操作）。"]);
+    },
+  },
+  {
+    name: "item_move",
+    title: "分拣任务到项目",
+    description:
+      "把任务移动到正确的项目（例如从收件箱分拣出去），或移回收件箱。移动后仍保留状态与历史；若任务原属别的项目，会记录来源。",
+    write: true,
+    input: z.object({ item_id: z.string(), project: z.string().optional().describe("目标项目 id/key；省略=移回收件箱"), parking_lot: z.boolean().optional().describe("留在项目里但标记为待分拣，不计入进度"), note: z.string().optional() }),
+    handler: async (i, ctx) => {
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
+      gate(ctx, p && p.isInbox !== 1 ? p.id : null, "item_move");
+      const r = moveItem(i.item_id, p?.id ?? null, ctx.actor, { parkingLot: i.parking_lot, note: i.note }, ctx.ip);
+      return envelope(r, [`已移动到 ${r.project.key}（${r.project.name}）`]);
+    },
+  },
+  {
+    name: "item_merge",
+    title: "合并重复任务",
+    description: "同一项目内的重复任务合并：保留 keep_id，把其余任务的资料引用与历史挂过去后删除。用 search 或 checklist_list 先确认确实是同一件事。不同项目请用 item_move。",
+    write: true,
+    input: z.object({ keep_id: z.string(), dup_ids: z.array(z.string()).min(1).max(50) }),
+    handler: async (i, ctx) => {
+      const it = db.select().from(s.items).where(eq(s.items.id, i.keep_id)).get();
+      if (it) gate(ctx, it.projectId, "item_merge");
+      return envelope(mergeItems(i.keep_id, i.dup_ids, ctx.actor));
+    },
+  },
+  {
+    name: "file_move",
+    title: "资料改挂项目",
+    description: "把资料位置记录改挂到另一个项目（与任务分拣配套）。不移动磁盘上的文件。",
+    write: true,
+    input: z.object({ file_id: z.string(), project: z.string() }),
+    handler: async (i, ctx) => {
+      const p = resolveProjectOrNull(i.project);
+      gate(ctx, p!.isInbox ? null : p!.id, "file_move");
+      return envelope(moveFile(i.file_id, p!.id, ctx.actor));
+    },
+  },
+  {
+    name: "project_groups",
+    title: "查看/设置项目分组",
+    description: "查看项目分组及各组进度；传 groups 数组则整体设置分组顺序（已存在分组保留，任务挂靠不丢）。任务用 checklist_add/checklist_update 的 group 参数挂到分组。",
+    write: true,
+    input: z.object({ project: z.string(), groups: z.array(z.string()).max(20).optional() }),
+    handler: async (i, ctx) => {
+      const p = resolveProjectOrNull(i.project);
+      if (!i.groups) return envelope({ groups: listGroups(p!.id) });
+      gate(ctx, p!.isInbox ? null : p!.id, "project_groups");
+      return envelope({ groups: setProjectGroups(p!.id, i.groups, ctx.actor) });
     },
   },
   {
@@ -468,7 +545,7 @@ export const tools: ToolDef[] = [
     description: "列出会议档案（含摘要、来源、附件）。可按项目过滤。",
     input: z.object({ project: z.string().optional(), limit: z.number().int().max(100).optional() }),
     handler: async (i) => {
-      const p = i.project ? getProject(i.project) : null;
+      const p = i.project ? resolveProjectOrNull(i.project) : null;
       return envelope({ meetings: listMeetings(p?.id, i.limit) });
     },
   },
