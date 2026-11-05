@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen } from "lucide-react";
+import { LayoutDashboard, FolderKanban, CalendarCheck, Files, Bell, Settings, Plug, Search, LogOut, ScrollText, BookOpen, Newspaper, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
@@ -11,6 +11,8 @@ const NAV = [
   { href: "/", label: "总览", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/meetings", label: "会议档案", icon: CalendarCheck },
+  { href: "/brief", label: "简报", icon: Newspaper },
+  { href: "/matrix", label: "智能体", icon: Layers },
   { href: "/files", label: "资料位置", icon: Files },
   { href: "/inbox", label: "提醒", icon: Bell },
   { href: "/policies", label: "条例", icon: ScrollText },
@@ -88,6 +90,7 @@ function MobileNav({ path, unread, onSearch }: { path: string; unread: number; o
     { href: "/", label: "总览", icon: LayoutDashboard },
     { href: "/projects", label: "项目", icon: FolderKanban },
     { href: "/meetings", label: "会议", icon: CalendarCheck },
+    { href: "/brief", label: "简报", icon: Newspaper },
     { href: "/inbox", label: "提醒", icon: Bell },
     { href: "/settings", label: "设置", icon: Settings },
   ];

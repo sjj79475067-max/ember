@@ -5,8 +5,8 @@ import { newId, nowSec } from "@/lib/id";
 import type { Actor } from "@/lib/audit";
 import { addItems } from "./items";
 
-export function createFingerprint(text: string) {
-  const norm = text.replace(/\s+/g, " ").trim().slice(0, 20000);
+export function createFingerprint(text: string, scope = "") {
+  const norm = (scope ? scope + "::" : "") + text.replace(/\s+/g, " ").trim().slice(0, 20000);
   return createHash("sha256").update(norm).digest("hex").slice(0, 24);
 }
 
@@ -23,7 +23,7 @@ export type IngestInput = {
 };
 
 export async function ingest(input: IngestInput, actor: Actor, ip = "") {
-  const fp = createFingerprint(input.text);
+  const fp = createFingerprint(input.text, input.projectId ?? "");
   const dup = db.select().from(s.importBatches).where(eq(s.importBatches.fingerprint, fp)).get();
   if (dup) return { deduped: true, batchId: dup.id, itemIds: JSON.parse(dup.createdItemIds) as string[] };
 

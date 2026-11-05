@@ -35,7 +35,7 @@ export function getMeeting(id: string) {
 }
 
 export async function createMeeting(input: MeetingInput, actor: Actor, ip = "") {
-  const fp = createFingerprint(input.minutesMd);
+  const fp = createFingerprint(input.minutesMd, input.projectId);
   const exists = db.select().from(s.meetings).where(eq(s.meetings.id, `fp_${fp}`)).get();
   if (exists) return { meeting: getMeeting(exists.id), deduped: true, createdItemIds: [] as string[] };
 

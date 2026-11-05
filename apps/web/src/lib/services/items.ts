@@ -70,7 +70,8 @@ export function updateItem(itemId: string, patch: UpdatePatch, actor: Actor, age
     if (patch.status !== "blocked") set.blockReason = "";
     if (patch.evidence) set.evidence = patch.evidence;
   }
-  if (patch.note && !patch.evidence) set.evidence = patch.note;
+  // 备注只写备注，不覆盖证据（证据是验收依据，必须单独保留）
+  if (patch.note) set.evidence = cur.evidence ? cur.evidence : patch.note;
   if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
   if (patch.blockReason !== undefined) set.blockReason = patch.blockReason;
   if (patch.priority) set.priority = patch.priority;

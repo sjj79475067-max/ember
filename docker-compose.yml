@@ -12,6 +12,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3000}
       SESSION_SECRET: ${SESSION_SECRET:?请在 .env 里设置 SESSION_SECRET}
       DATABASE_URL: file:/app/data/ember.db
+      CRON_KEY: ${CRON_KEY:-}
       TZ: Asia/Shanghai
     volumes:
       - ember-data:/app/data
