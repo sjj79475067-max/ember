@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { toast } from "sonner";
 
-type D = { id: string; type: string; projectId: string | null; projectName: string; confidence: number; title: string; detail: string; dueAt: number | null; priority: string; waitingFor: string; evidence: string; done: boolean; targetTitle: string; status: string; href: string | null };
+type D = { id: string; type: string; projectId: string | null; projectName: string; confidence: number; title: string; detail: string; dueAt: number | null; remindAt: number | null; priority: string; waitingFor: string; evidence: string; done: boolean; targetTitle: string; status: string; href: string | null };
 type C = { id: string; channel: string; kind: string; text: string; status: string; error: string; parser: string; createdAt: number; drafts: D[] };
 type Data = { captures: C[]; projects: Array<{ id: string; name: string }>; typeLabel: Record<string, string>; focus: string | null; showAll: boolean };
 
@@ -21,6 +21,8 @@ async function post(body: Record<string, unknown>) {
   return r;
 }
 const toDate = (t: number | null) => (t ? new Date(t * 1000).toLocaleDateString("sv-SE") : "");
+const toLocal = (t: number | null) => { if (!t) return ""; const d = new Date(t * 1000); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fromLocal = (v: string) => (v ? Math.floor(new Date(v).getTime() / 1000) : null);
 const fromDate = (v: string) => (v ? Math.floor(new Date(v + "T18:00:00").getTime() / 1000) : null);
 const ago = (t: number) => { const m = Math.floor((Date.now() / 1000 - t) / 60); return m < 1 ? "刚刚" : m < 60 ? `${m} 分钟前` : m < 1440 ? `${Math.floor(m / 60)} 小时前` : `${Math.floor(m / 1440)} 天前`; };
 
@@ -106,7 +108,7 @@ function CaptureCard({ c, data }: { c: C; data: Data }) {
 
 function DraftRow({ d, data }: { d: D; data: Data }) {
   const router = useRouter();
-  const [f, setF] = useState({ type: d.type, projectId: d.projectId ?? "", title: d.title, due: toDate(d.dueAt), waitingFor: d.waitingFor, done: d.done });
+  const [f, setF] = useState({ type: d.type, projectId: d.projectId ?? "", title: d.title, due: toDate(d.dueAt), remind: toLocal(d.remindAt), waitingFor: d.waitingFor, done: d.done });
   const sel = "h-8 rounded-md border border-[var(--color-line)] bg-[var(--color-card)] px-1.5 text-[12px]";
   if (d.status !== "pending") {
     return (
@@ -120,7 +122,7 @@ function DraftRow({ d, data }: { d: D; data: Data }) {
   }
   async function confirm() {
     const patch = {
-      type: f.type, projectId: f.projectId || null, title: f.title, dueAt: fromDate(f.due), waitingFor: f.waitingFor, done: f.done,
+      type: f.type, projectId: f.projectId || null, title: f.title, dueAt: fromDate(f.due), remindAt: fromLocal(f.remind), waitingFor: f.waitingFor, done: f.done,
     };
     const r = await post({ action: "confirm", id: d.id, patch });
     if (r.ok) { toast.success("已落实"); router.refresh(); }
@@ -144,6 +146,7 @@ function DraftRow({ d, data }: { d: D; data: Data }) {
       <Input className="mt-1.5 h-9" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px]">
         {["item", "purchase", "deal", "trip"].includes(f.type) && <label className="flex items-center gap-1 text-[var(--color-muted)]">{f.type === "trip" ? "出发" : f.type === "purchase" ? "需到货" : f.type === "deal" ? "下一步" : "截止"}<Input type="date" className="h-8 w-36" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></label>}
+        {f.type === "item" && <label className="flex items-center gap-1 text-[var(--color-muted)]">⏰ 提醒<Input type="datetime-local" className="h-8 w-48" value={f.remind} onChange={(e) => setF({ ...f, remind: e.target.value })} /></label>}
         {["item", "progress"].includes(f.type) && <Input className="h-8 w-40" value={f.waitingFor} onChange={(e) => setF({ ...f, waitingFor: e.target.value })} placeholder="在等谁（可空）" />}
         {f.type === "progress" && <label className="flex items-center gap-1"><input type="checkbox" checked={f.done} onChange={(e) => setF({ ...f, done: e.target.checked })} />已办完</label>}
       </div>

@@ -14,6 +14,7 @@ import { listPurchases, savePurchase, addQuote, PURCHASE_STATUS } from "@/lib/se
 import { listDeals, saveDeal, saveContact, listContacts, DEAL_STAGES } from "@/lib/services/crm";
 import { listTrips, saveTrip } from "@/lib/services/trips";
 import { agenda } from "@/lib/services/calendar";
+import { reportFeedback, maintainerBrief, FEEDBACK_KINDS } from "@/lib/services/maintenance";
 import { secretaryOverview, planToday, weeklyMaterial, saveWeeklyReview, localYmd } from "@/lib/services/secretary";
 import { addOwnedItems } from "@/lib/services/owned";
 import { validRecur } from "@/lib/services/recur";
@@ -428,6 +429,7 @@ export const tools: ToolDef[] = [
       follow_up_at: iso.nullable().optional().describe("什么时候去催（默认交出后 3 天）"),
       planned_for: z.string().optional().describe("计划哪天做，YYYY-MM-DD；传 'today' 表示今天；空串移出计划"),
       defer_until: iso.nullable().optional().describe("先放一放：这天之前不出现在今日和到期提醒里"),
+      remind_at: iso.nullable().optional().describe("到这个时刻主动提醒用户（飞书私聊）；null 取消"),
     }),
     handler: async (i, ctx) => {
       const before = db.select().from(s.items).all().find((x) => x.id === i.item_id);
@@ -442,7 +444,7 @@ export const tools: ToolDef[] = [
           dueAt: i.due_at as never, priority: i.priority as never, expectedVersion: i.expected_version,
           kind: i.kind, milestoneId: st.milestoneId, requirementId: st.requirementId, mustMeet: i.must_meet,
           startAt: i.start_at as never, leadTimeDays: i.lead_time_days as never, doneDefinition: i.done_definition,
-          waitingFor: i.waiting_for, followUpAt: i.follow_up_at as never, plannedFor: i.planned_for, deferUntil: i.defer_until as never,
+          waitingFor: i.waiting_for, followUpAt: i.follow_up_at as never, plannedFor: i.planned_for, deferUntil: i.defer_until as never, remindAt: i.remind_at as never,
         }, ctx.actor, i.session_id, ctx.ip);
         if (i.group !== undefined) {
           setItemGroup(i.item_id, i.group);
@@ -974,6 +976,37 @@ export const tools: ToolDef[] = [
       const m = weeklyMaterial(i.week);
       return envelope(m as unknown as Record<string, unknown>);
     },
+  },
+  {
+    name: "ember_feedback",
+    title: "反馈 Ember 自己的问题（乱了 / 记不了 / 规则不对）",
+    description:
+      "用 Ember 时发现它自己有问题就调这个，不管你在哪个项目里干活：\n" +
+      "- bug 出错；confusion 记乱了（重复、归错项目、进展被当成新事项…）；gap 有件事 Ember 记不了；rule 某条规则挡错了或该挡没挡；idea 改进想法。\n" +
+      "相似的问题已经有人报过，会记到原条目上（累计次数和例子），不会另起一条；同一问题被报 3 次自动升 P0。\n" +
+      "这是给维护 Ember 的人看的，不是你当前项目的任务，不要用它记项目里的事。",
+    write: true,
+    input: z.object({
+      kind: z.enum(Object.keys(FEEDBACK_KINDS) as [string, ...string[]]),
+      title: z.string().describe("一句话：什么问题"),
+      example: z.string().optional().describe("具体例子：原话、事项标题、报错信息"),
+      where: z.string().optional().describe("在哪：工具名、页面、项目"),
+      detail: z.string().optional(),
+    }),
+    handler: async (i, ctx) => {
+      gate(ctx, null, "ember_feedback");
+      const r = reportFeedback({ kind: i.kind, title: i.title, example: i.example, where: i.where, detail: i.detail }, ctx.actor);
+      return envelope({ issue_id: r.id, merged: r.merged, times: r.times }, [r.merged ? `已记到已有问题上（第 ${r.times} 次）。` : "已记录，维护 Ember 时会处理。"]);
+    },
+  },
+  {
+    name: "maintainer_brief",
+    title: "维护 Ember 的开工包（问题 / 已定决定 / 需求）",
+    description:
+      "只在你要修改 Ember 本身（这个仓库的代码）时调用。返回：没解决的问题（按优先级和被报次数）、已经定下来的决定（不要推翻重做）、需求状态、最近修好的。\n" +
+      "这是 Ember 的唯一外部记忆：动手前先读 decisions，改完把新决定用 decision_record(project='EMBER') 记下来。",
+    input: z.object({}),
+    handler: async () => envelope(maintainerBrief() as unknown as Record<string, unknown>),
   },
   {
     name: "calendar_agenda",

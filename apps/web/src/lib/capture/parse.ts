@@ -15,7 +15,7 @@ export type DraftType = (typeof DRAFT_TYPES)[number];
 
 export type Draft = {
   type: DraftType; projectId: string | null; projectConfidence: number; title: string; detail: string;
-  dueAt: number | null; priority: "P0" | "P1" | "P2" | "P3"; targetItemId: string | null; done: boolean;
+  dueAt: number | null; remindAt: number | null; priority: "P0" | "P1" | "P2" | "P3"; targetItemId: string | null; done: boolean;
   waitingFor: string; evidence: string; fields: Record<string, unknown>;
 };
 
@@ -37,22 +37,55 @@ function context() {
 const CN_NUM: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 日: 7, 天: 7 };
 const at18 = (d: Date) => Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18).getTime() / 1000);
 
-/** 从中文口语里取截止时间：今天/明天/后天/大后天/周X/下周X/X月X日/X号/N天后/月底 */
-export function parseCnDate(text: string, now = new Date()): number | null {
-  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
-  const add = (n: number) => at18(new Date(base.getFullYear(), base.getMonth(), base.getDate() + n));
+const CN_DIGIT: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+/** 「十二」「二十五」「8」→ 数字 */
+function cnNum(s: string): number | null {
+  if (/^\d+$/.test(s)) return Number(s);
+  if (!s) return null;
+  if (s === "十") return 10;
+  const m = s.match(/^([一二两三四五六七八九])?十([一二三四五六七八九])?$/);
+  if (m) return (m[1] ? CN_DIGIT[m[1]] : 1) * 10 + (m[2] ? CN_DIGIT[m[2]] : 0);
+  return s.length === 1 && s in CN_DIGIT ? CN_DIGIT[s] : null;
+}
+
+/** 说了几点几分：「八点半」「早上8:30」「下午三点一刻」「晚上9点」→ { h, m } */
+export function parseCnTime(text: string): { h: number; m: number } | null {
+  const N = "\\d{1,2}|[零〇一二两三四五六七八九十]{1,3}";
+  const re = new RegExp(`(凌晨|早上|早晨|清晨|上午|中午|下午|傍晚|晚上|夜里|今晚|明早|明晚)?\\s*(${N})\\s*(?:[:：](\\d{2})|点(?:钟)?\\s*(半|一刻|三刻|(${N})\\s*分?)?)`);
+  const m = text.match(re);
+  if (!m) return null;
+  let h = cnNum(m[2]);
+  if (h == null || h > 24) return null;
+  let min = 0;
+  if (m[3]) min = Number(m[3]);
+  else if (m[4] === "半") min = 30;
+  else if (m[4] === "一刻") min = 15;
+  else if (m[4] === "三刻") min = 45;
+  else if (m[5]) min = cnNum(m[5]) ?? 0;
+  if (min > 59) return null;
+  const period = m[1] ?? "";
+  if (/下午|傍晚|晚上|夜里|今晚|明晚/.test(period) && h < 12) h += 12;
+  if (/中午/.test(period) && h < 11) h += 12;
+  if (h === 24) h = 0;
+  return { h, m: min };
+}
+
+/** 说的是哪一天（没说返回 null）。凌晨 0–5 点说「明天」= 天亮后的今天（人还没睡，"明天"指的是醒来那天） */
+function parseCnDay(text: string, base: Date): Date | null {
+  const day = (n: number) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + n, 12);
+  const lateNight = base.getHours() < 5;
   let m: RegExpMatchArray | null;
-  if ((m = text.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/))) return at18(new Date(+m[1], +m[2] - 1, +m[3]));
+  if ((m = text.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/))) return new Date(+m[1], +m[2] - 1, +m[3], 12);
   if ((m = text.match(/(\d{1,2})月(\d{1,2})[日号]?/))) {
-    let d = new Date(base.getFullYear(), +m[1] - 1, +m[2]);
-    if (d.getTime() < base.getTime() - 30 * 86400_000) d = new Date(base.getFullYear() + 1, +m[1] - 1, +m[2]);
-    return at18(d);
+    let d = new Date(base.getFullYear(), +m[1] - 1, +m[2], 12);
+    if (d.getTime() < base.getTime() - 30 * 86400_000) d = new Date(base.getFullYear() + 1, +m[1] - 1, +m[2], 12);
+    return d;
   }
-  if (/大后天/.test(text)) return add(3);
-  if (/后天/.test(text)) return add(2);
-  if (/明天|明早|明晚/.test(text)) return add(1);
-  if (/今天|今晚|今日|马上|尽快/.test(text)) return add(0);
-  if ((m = text.match(/(\d+|[一二两三四五六七八九十])\s*天(后|内|之内)/))) return add(Number(m[1]) || CN_NUM[m[1]] || 10);
+  if (/大后天/.test(text)) return day(lateNight ? 2 : 3);
+  if (/后天/.test(text)) return day(lateNight ? 1 : 2);
+  if (/明天|明早|明晚|明儿/.test(text)) return day(lateNight ? 0 : 1);
+  if (/今天|今晚|今日|今早|马上|尽快/.test(text)) return day(0);
+  if ((m = text.match(/(\d+|[一二两三四五六七八九十])\s*天(后|内|之内)/))) return day(Number(m[1]) || CN_NUM[m[1]] || 10);
   if ((m = text.match(/(下下|下)?(周|星期|礼拜)([一二三四五六日天])/))) {
     const want = CN_NUM[m[3]];
     const cur = ((base.getDay() + 6) % 7) + 1;
@@ -60,16 +93,35 @@ export function parseCnDate(text: string, now = new Date()): number | null {
     if (m[1] === "下") diff += 7;
     else if (m[1] === "下下") diff += 14;
     else if (diff < 0) diff += 7;
-    return add(diff);
+    return day(diff);
   }
-  if (/下周/.test(text)) return add(7 - ((base.getDay() + 6) % 7));
-  if (/月底/.test(text)) return at18(new Date(base.getFullYear(), base.getMonth() + 1, 0));
-  if ((m = text.match(/(\d{1,2})[号日]/))) {
-    let d = new Date(base.getFullYear(), base.getMonth(), +m[1]);
-    if (d.getTime() < base.getTime() - 86400_000) d = new Date(base.getFullYear(), base.getMonth() + 1, +m[1]);
-    return at18(d);
+  if (/下周/.test(text)) return day(7 - ((base.getDay() + 6) % 7));
+  if (/月底/.test(text)) return new Date(base.getFullYear(), base.getMonth() + 1, 0, 12);
+  if ((m = text.match(/(\d{1,2})[号日](?!\d)/))) {
+    let d = new Date(base.getFullYear(), base.getMonth(), +m[1], 12);
+    if (d.getTime() < base.getTime() - 86400_000) d = new Date(base.getFullYear(), base.getMonth() + 1, +m[1], 12);
+    return d;
   }
   return null;
+}
+
+/** 从中文口语里取截止时间：今天/明天/后天/周X/下周X/X月X日/X号/N天后/月底（默认当天 18:00） */
+export function parseCnDate(text: string, now = new Date()): number | null {
+  const d = parseCnDay(text, now);
+  return d ? at18(d) : null;
+}
+
+/**
+ * 说了具体几点 → 到点提醒的时刻。只说时间没说哪天：还没过就是今天，过了就是明天。
+ * 「明天八点半向我问安」在凌晨 3 点说 → 今天 08:30。
+ */
+export function parseRemindAt(text: string, now = new Date()): number | null {
+  const tm = parseCnTime(text);
+  if (!tm) return null;
+  const d = parseCnDay(text, now);
+  let at = new Date((d ?? now).getFullYear(), (d ?? now).getMonth(), (d ?? now).getDate(), tm.h, tm.m);
+  if (!d && at.getTime() <= now.getTime()) at = new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1, tm.h, tm.m);
+  return Math.floor(at.getTime() / 1000);
 }
 
 // ---------- 无 AI 的规则整理 ----------
@@ -110,13 +162,14 @@ export function parseByRules(text: string, now = new Date()): Draft[] {
   const lines = text.length > 400 || MEETING_RE.test(text.trim()) ? [] : splitSentences(text);
   if (!lines.length) {
     // 长文或明显是会议：整段归档为会议记录
-    return [{ type: "meeting", projectId: whole?.p.id ?? null, projectConfidence: whole?.score ?? 0, title: text.trim().split(/\n/)[0].slice(0, 40), detail: text.trim(), dueAt: null, priority: "P2", targetItemId: null, done: false, waitingFor: "", evidence: "整段较长，按会议/记录归档", fields: {} }];
+    return [{ type: "meeting", projectId: whole?.p.id ?? null, projectConfidence: whole?.score ?? 0, title: text.trim().split(/\n/)[0].slice(0, 40), detail: text.trim(), dueAt: null, remindAt: null, priority: "P2", targetItemId: null, done: false, waitingFor: "", evidence: "整段较长，按会议/记录归档", fields: {} }];
   }
   const out: Draft[] = [];
   for (const line of lines.slice(0, 12)) {
     const pm = matchProject(line, projects) ?? whole;
     const projectId = pm?.p.id ?? null;
-    const due = parseCnDate(line, now);
+    const remind = parseRemindAt(line, now);
+    const due = remind ?? parseCnDate(line, now);
     const wait = line.match(WAIT_RE);
     // 是不是在说某件已有事项的进展
     const cand = open.filter((i) => !projectId || i.projectId === projectId).find((i) => similar(i.title, line) || line.includes(i.title));
@@ -127,7 +180,7 @@ export function parseByRules(text: string, now = new Date()): Draft[] {
     else if (DEAL_RE.test(line) && /客户|合作|签/.test(line)) type = "deal";
     const draft: Draft = {
       type, projectId: type === "progress" ? cand!.projectId : projectId, projectConfidence: type === "progress" ? 85 : pm?.score ?? 0,
-      title: line.replace(/^(我要|要|需要|记得|别忘了|提醒我)/, "").slice(0, 80), detail: "", dueAt: due, priority: /急|马上|今天|尽快|重要/.test(line) ? "P0" : "P1",
+      title: line.replace(/^(我要|要|需要|记得|别忘了|提醒我)/, "").slice(0, 80), detail: "", dueAt: due, remindAt: remind, priority: /急|马上|今天|尽快|重要/.test(line) ? "P0" : "P1",
       targetItemId: type === "progress" ? cand!.id : null, done: type === "progress" && DONE_RE.test(line) && !wait,
       waitingFor: wait ? wait[1] : "", evidence: line, fields: {},
     };
@@ -141,7 +194,7 @@ export function parseByRules(text: string, now = new Date()): Draft[] {
 
 // ---------- AI 整理 ----------
 const SYSTEM = `你是一人公司的秘书。用户随手发来一段话（可能是语音转写，有错字和口语）。把它整理成要落到系统里的若干条草稿，严格输出 JSON：
-{"drafts":[{"type":"item|progress|meeting|purchase|deal|trip|note","project":"项目 key，拿不准就填空串","confidence":0-100,"title":"简洁的事项标题（动词开头）","detail":"补充说明，可空","due":"YYYY-MM-DD 或空串","priority":"P0|P1|P2","target_item_id":"type=progress 时填已有事项的 id","done":false,"waiting_for":"在等谁（如 王经理、管局审核），没有填空串","evidence":"原话中支撑这条的片段","fields":{}}]}
+{"drafts":[{"type":"item|progress|meeting|purchase|deal|trip|note","project":"项目 key，拿不准就填空串","confidence":0-100,"title":"简洁的事项标题（动词开头）","detail":"补充说明，可空","due":"YYYY-MM-DD 或空串","remind_at":"用户说了具体几点要提醒/要做时填 YYYY-MM-DD HH:mm，否则空串","priority":"P0|P1|P2","target_item_id":"type=progress 时填已有事项的 id","done":false,"waiting_for":"在等谁（如 王经理、管局审核），没有填空串","evidence":"原话中支撑这条的片段","fields":{}}]}
 类型规则：
 - item：一件新的要做的事。
 - progress：在说【已有事项】的进展或已办完（从给出的事项列表里找 id；已办完则 done=true）。不要为进展新建 item。
@@ -151,11 +204,11 @@ const SYSTEM = `你是一人公司的秘书。用户随手发来一段话（可�
 - trip：出差/出行。fields 可含 city、startAt(YYYY-MM-DD)、endAt(YYYY-MM-DD)、purpose。
 - note：值得记下的信息，不需要做什么。
 项目规则：只能从给出的项目 key 里选；话里没提且无法从内容确定就留空，confidence 给低分。一句话涉及多个项目要拆成多条。
-不要编造原话里没有的事情、日期、金额。今天是 {{TODAY}}。`;
+不要编造原话里没有的事情、日期、金额。现在是 {{TODAY}}。凌晨 0–5 点说的「明天」指天亮后的今天。`;
 
 export async function parseByAi(text: string, now = new Date()) {
   const { projects, open } = context();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}（星期${"日一二三四五六"[now.getDay()]}）`;
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}（星期${"日一二三四五六"[now.getDay()]}）`;
   const ctx = [
     "项目：", ...projects.map((p) => `- ${p.key}｜${p.name}${p.aliases.length ? `｜别名 ${p.aliases.join("、")}` : ""}`),
     "", "未完成事项（id｜项目key｜标题）：", ...open.map((i) => `- ${i.id}｜${projects.find((p) => p.id === i.projectId)?.key}｜${i.title}`),
@@ -177,12 +230,14 @@ export async function parseByAi(text: string, now = new Date()) {
     let target = type === "progress" && d.target_item_id ? openIds.get(String(d.target_item_id)) ?? null : null;
     if (target) project = projects.find((p) => p.id === target!.projectId) ?? project;
     const due = typeof d.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.due) ? at18(new Date(d.due + "T12:00:00")) : null;
+    const rm = typeof d.remind_at === "string" ? d.remind_at.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/) : null;
+    const remindAt = rm ? Math.floor(new Date(`${rm[1]}T${rm[2]}:${rm[3]}:00`).getTime() / 1000) : parseRemindAt(String(d.evidence || title), now);
     const fields = d.fields && typeof d.fields === "object" ? { ...d.fields } : {};
     for (const k of ["startAt", "endAt"]) if (typeof fields[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fields[k])) fields[k] = at18(new Date(fields[k] + "T12:00:00")); else delete fields[k];
     drafts.push({
       type: type === "progress" && !target ? "item" : type, // 找不到对应事项的「进展」当新事项，由你确认
       projectId: project?.id ?? null, projectConfidence: project ? Math.max(0, Math.min(100, Number(d.confidence) || 50)) : 0,
-      title, detail: type === "meeting" ? String(d.detail || text) : String(d.detail ?? "").slice(0, 2000), dueAt: due,
+      title, detail: type === "meeting" ? String(d.detail || text) : String(d.detail ?? "").slice(0, 2000), dueAt: due ?? remindAt, remindAt: Number.isFinite(remindAt) ? remindAt : null,
       priority: ["P0", "P1", "P2", "P3"].includes(d.priority) ? d.priority : "P1",
       targetItemId: target?.id ?? null, done: !!d.done && !!target, waitingFor: String(d.waiting_for ?? "").slice(0, 40),
       evidence: String(d.evidence ?? "").slice(0, 300), fields,

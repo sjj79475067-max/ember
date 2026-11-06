@@ -16,7 +16,7 @@ export type Envelope = {
 
 export type ReviewDraft = {
   id: string; type: string; typeLabel: string; title: string; projectId: string | null; projectName: string;
-  confidence: number; dueAt: number | null; waitingFor: string; evidence: string; status: string; targetTitle?: string;
+  confidence: number; dueAt: number | null; remindAt?: number | null; waitingFor: string; evidence: string; status: string; targetTitle?: string;
   resultHref?: string;
 };
 export type ReviewView = {

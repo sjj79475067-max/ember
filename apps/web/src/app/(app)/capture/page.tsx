@@ -16,7 +16,7 @@ export default async function CapturePage({ searchParams }: { searchParams: Prom
     id: c.id, channel: c.channel, kind: c.kind, text: c.transcript || c.rawText, status: c.status, error: c.error, parser: c.parser, createdAt: c.createdAt,
     drafts: c.drafts.map((d) => ({
       id: d.id, type: d.type, projectId: d.projectId, projectName: d.projectId ? names.get(d.projectId) ?? "" : "", confidence: d.projectConfidence,
-      title: d.title, detail: d.detail, dueAt: d.dueAt, priority: d.priority, waitingFor: d.waitingFor, evidence: d.evidence, done: d.done === 1,
+      title: d.title, detail: d.detail, dueAt: d.dueAt, remindAt: d.remindAt, priority: d.priority, waitingFor: d.waitingFor, evidence: d.evidence, done: d.done === 1,
       targetTitle: d.targetItemId ? targets.get(d.targetItemId) ?? "" : "", status: d.status, href: resultHref(d) ?? null,
     })),
   }));

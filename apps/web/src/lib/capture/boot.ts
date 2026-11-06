@@ -1,6 +1,7 @@
 import { registerChannel, listChannels } from "./channel";
 import { feishuAdapter } from "./feishu";
 import { httpAdapter, webAdapter } from "./http";
+import { startReminderLoop } from "./scheduler";
 
 const g = globalThis as unknown as { __emberChannelsBooted?: boolean };
 
@@ -11,6 +12,8 @@ export async function bootChannels(force = false) {
   registerChannel(webAdapter);
   registerChannel(httpAdapter);
   registerChannel(feishuAdapter);
+  startReminderLoop();
+  try { (await import("@/lib/services/maintenance")).emberProject(); } catch (e) { console.warn("[boot] EMBER 项目", (e as Error).message); }
   for (const a of listChannels()) {
     try { await a.start?.(); } catch (e) { console.warn(`[channel:${a.id}] 启动失败`, (e as Error).message); }
   }

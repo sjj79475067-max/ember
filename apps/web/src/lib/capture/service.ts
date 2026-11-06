@@ -58,7 +58,7 @@ export async function ingestEnvelope(env: Envelope, opts: { now?: Date } = {}) {
 function saveDrafts(captureId: string, drafts: Draft[]) {
   drafts.forEach((d, i) => db.insert(s.captureDrafts).values({
     id: newId("cd"), captureId, position: i, type: d.type, projectId: d.projectId, projectConfidence: d.projectConfidence,
-    title: d.title, detail: d.detail, dueAt: d.dueAt, priority: d.priority, targetItemId: d.targetItemId, done: d.done ? 1 : 0,
+    title: d.title, detail: d.detail, dueAt: d.dueAt, remindAt: d.remindAt, priority: d.priority, targetItemId: d.targetItemId, done: d.done ? 1 : 0,
     waitingFor: d.waitingFor, evidence: d.evidence, fieldsJson: JSON.stringify(d.fields ?? {}), status: "pending", createdAt: nowSec(),
   }).run());
 }
@@ -83,7 +83,7 @@ export function pendingDraftCount() {
   return db.select().from(s.captureDrafts).where(eq(s.captureDrafts.status, "pending")).all().length;
 }
 
-export type DraftPatch = Partial<{ type: string; projectId: string | null; title: string; detail: string; dueAt: number | null; priority: string; waitingFor: string; targetItemId: string | null; done: boolean; fields: Record<string, unknown> }>;
+export type DraftPatch = Partial<{ type: string; projectId: string | null; title: string; detail: string; dueAt: number | null; remindAt: number | null; priority: string; waitingFor: string; targetItemId: string | null; done: boolean; fields: Record<string, unknown> }>;
 
 export function editDraft(id: string, patch: DraftPatch) {
   const d = db.select().from(s.captureDrafts).where(eq(s.captureDrafts.id, id)).get();
@@ -99,6 +99,7 @@ export function editDraft(id: string, patch: DraftPatch) {
   if (patch.title !== undefined) set.title = patch.title.trim().slice(0, 120) || d.title;
   if (patch.detail !== undefined) set.detail = patch.detail.slice(0, 4000);
   if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
+  if (patch.remindAt !== undefined) set.remindAt = patch.remindAt;
   if (patch.priority && ["P0", "P1", "P2", "P3"].includes(patch.priority)) set.priority = patch.priority;
   if (patch.waitingFor !== undefined) set.waitingFor = patch.waitingFor.slice(0, 40);
   if (patch.targetItemId !== undefined) set.targetItemId = patch.targetItemId;
@@ -167,7 +168,7 @@ export async function confirmDraft(id: string, actor: Actor, patch?: DraftPatch)
     default: {
       const r = addItems(projectId, [{ title: d.title, detailMd: d.detail, dueAt: d.dueAt, priority: d.priority as never, sourceType: "import", sourceRef: srcRef }], actor);
       resultType = "item"; resultId = r.byIndex[0] ?? "";
-      if (resultId && d.waitingFor) updateItem(resultId, { waitingFor: d.waitingFor }, actor);
+      if (resultId && (d.waitingFor || d.remindAt)) updateItem(resultId, { waitingFor: d.waitingFor || undefined, remindAt: d.remindAt ?? undefined }, actor);
     }
   }
   db.update(s.captureDrafts).set({ status: "confirmed", resultType, resultId, decidedBy: actor.name, decidedAt: nowSec() }).where(eq(s.captureDrafts.id, id)).run();
@@ -236,7 +237,7 @@ export function reviewView(captureId: string): ReviewView {
     const target = d.targetItemId ? db.select().from(s.items).where(eq(s.items.id, d.targetItemId)).get() : undefined;
     return {
       id: d.id, type: d.type, typeLabel: TYPE_LABEL[d.type] ?? d.type, title: d.title, projectId: d.projectId, projectName: d.projectId ? names.get(d.projectId) ?? "" : "",
-      confidence: d.projectConfidence, dueAt: d.dueAt, waitingFor: d.waitingFor, evidence: d.evidence, status: d.status,
+      confidence: d.projectConfidence, dueAt: d.dueAt, remindAt: d.remindAt, waitingFor: d.waitingFor, evidence: d.evidence, status: d.status,
       targetTitle: target?.title, resultHref: resultHref(d) ? appUrl() + resultHref(d) : undefined,
     };
   });

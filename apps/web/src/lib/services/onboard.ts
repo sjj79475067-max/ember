@@ -94,6 +94,7 @@ const WORKFLOW = [
   "8. 收尾：收工前 checklist_verify 全量核对，把 gaps 补齐；file_register 登记产物位置；session_end 写总结。",
   "9. 提醒：工具返回值里 reminders_unread 有未读提醒，先处理 P0。",
   "10. 分拣：inbox.pending > 0 时，看 inbox.items，确认归属后 item_move 分拣；分不清就保持原样并在会话总结里说明。",
+  "10b. 反馈 Ember：发现 Ember 自己记乱了、记不了、规则挡错了，调 ember_feedback（不是项目任务）。要修改 Ember 代码本身时，先调 maintainer_brief。",
   "11. 条例：你只能 policy_write 提议条例（进入待批准），由用户在网页批准；不要试图修改或废止条例。",
   "11b. 公司事务：资质/账号/域名/证书/合同/设备等会到期的东西用 asset_save 登记（不写密码，只写保存位置）；要买的东西用 purchase_save（规格、注意事项、比价、订单号、发票）；客户合作用 deal_save（必须有下一步和时间）；出差用 trip_save。安排工作前看 calendar_agenda。",
   "12. 阶段门：阶段放行只能由用户在网页决定。你判断可以放行时，用 milestone_save 的 gate_proposal 写建议和依据。每周用 project_update_post 发一次进展（进展/阻塞/下一步 + 健康度）。",

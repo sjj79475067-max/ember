@@ -154,6 +154,8 @@ export const items = sqliteTable("items", {
   plannedFor: text().notNull().default(""), // YYYY-MM-DD 计划哪天做
   rollCount: integer().notNull().default(0),
   deferUntil: integer(),
+  remindAt: integer(), // 到这个时刻主动发消息提醒（飞书私聊，没连就走通知渠道）
+  remindedAt: integer(),
   parentId: text(),
   title: text().notNull(),
   detailMd: text().notNull().default(""),
@@ -556,6 +558,7 @@ export const captureDrafts = sqliteTable("capture_drafts", {
   title: text().notNull(),
   detail: text().notNull().default(""),
   dueAt: integer(),
+  remindAt: integer(),
   priority: text().notNull().default("P1"),
   targetItemId: text(), // type=progress：对应已有事项
   done: integer().notNull().default(0), // progress 且已办完

@@ -39,6 +39,61 @@ describe("口语日期", () => {
   });
 });
 
+describe("几点几分与到点提醒", () => {
+  it("时间：八点半/早上8:30/下午三点一刻/晚上9点/十二点", async () => {
+    const { parseCnTime } = await import("@/lib/capture/parse");
+    expect(parseCnTime("明天八点半向我问安")).toEqual({ h: 8, m: 30 });
+    expect(parseCnTime("早上8:30开会")).toEqual({ h: 8, m: 30 });
+    expect(parseCnTime("下午三点一刻打电话")).toEqual({ h: 15, m: 15 });
+    expect(parseCnTime("晚上9点提醒我")).toEqual({ h: 21, m: 0 });
+    expect(parseCnTime("十二点二十分")).toEqual({ h: 12, m: 20 });
+    expect(parseCnTime("买3个显示器")).toBeNull();
+  });
+  it("凌晨说「明天八点半」= 今天早上；白天说 = 明天；只说时间已过 = 明天", async () => {
+    const { parseRemindAt } = await import("@/lib/capture/parse");
+    const hm = (sec: number | null) => { const d = new Date(sec! * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+    expect(hm(parseRemindAt("明天八点半向我问安", new Date(2026, 10, 6, 3, 15)))).toBe("11/6 8:30");
+    expect(hm(parseRemindAt("明天八点半向我问安", new Date(2026, 10, 6, 14, 0)))).toBe("11/7 8:30");
+    expect(hm(parseRemindAt("九点提醒我交材料", new Date(2026, 10, 6, 10, 0)))).toBe("11/7 9:00");
+    expect(hm(parseRemindAt("晚上9点提醒我", new Date(2026, 10, 6, 10, 0)))).toBe("11/6 21:00");
+    expect(parseRemindAt("明天交材料", new Date(2026, 10, 6, 10, 0))).toBeNull();
+  });
+  it("到点发出，只发一次；问候类附今日安排并自动完成；过期太久不补发", async () => {
+    const { ingestEnvelope, confirmDraft } = await import("@/lib/capture/service");
+    const { runDueReminders } = await import("@/lib/capture/scheduler");
+    const { __setFeishuChannelForTest } = await import("@/lib/capture/feishu");
+    const { setSetting } = await import("@/lib/notify");
+    const { db, s } = await import("@/lib/db");
+    const { eq } = await import("drizzle-orm");
+    const sent: string[] = [];
+    __setFeishuChannelForTest({ connect: async () => {}, disconnect: async () => {}, on: () => {}, send: async (_to: string, input: any) => { sent.push(String(input.markdown)); return { messageId: "om_x" }; }, updateCard: async () => {}, downloadResource: async () => Buffer.from("") });
+    setSetting("feishu.owner_open_id", "ou_me");
+    const r = await ingestEnvelope({ channel: "web", externalId: "rm1", sender: "x", kind: "text", text: "明天八点半向我问安" }, { now: new Date(2026, 10, 6, 3, 15) });
+    expect(r.drafts[0].remindAt).toBeTruthy();
+    const c = await confirmDraft(r.drafts[0].id, user);
+    const at = db.select().from(s.items).where(eq(s.items.id, c.draft.resultId)).get()!.remindAt!;
+    expect(await runDueReminders(at - 60)).toEqual([]);
+    const out = await runDueReminders(at + 30);
+    expect(out[0].sent).toBe(true);
+    expect(sent.at(-1)).toMatch(/好/);
+    expect(sent.at(-1)).toMatch(/今日/);
+    expect(db.select().from(s.items).where(eq(s.items.id, c.draft.resultId)).get()!.status).toBe("done");
+    expect(await runDueReminders(at + 90)).toEqual([]); // 不重复
+    // 普通提醒 + 过期太久
+    const { addItems, updateItem } = await import("@/lib/services/items");
+    const { getProject } = await import("@/lib/services/projects");
+    const a = addItems(getProject("SITE")!.id, [{ title: "给王经理回电话" }, { title: "很久以前的提醒" }], user);
+    const t0 = Math.floor(Date.now() / 1000);
+    updateItem(a.ids[0], { remindAt: t0 - 60 }, user);
+    updateItem(a.ids[1], { remindAt: t0 - 10 * 3600 }, user);
+    const o2 = await runDueReminders(t0);
+    expect(sent.at(-1)).toMatch(/提醒：给王经理回电话/);
+    expect(o2.find((x) => x.id === a.ids[1])?.skipped).toBeTruthy();
+    __setFeishuChannelForTest(null);
+    setSetting("feishu.owner_open_id", ""); // 别影响后面的绑定测试
+  });
+});
+
 describe("规则整理（没配 AI）", () => {
   it("一句话多件事拆开、按名称/别名认项目、认不出留空、识别采购/在等", async () => {
     const { parseByRules } = await import("@/lib/capture/parse");
@@ -200,8 +255,11 @@ describe("飞书适配器", () => {
     const draft = db.select().from(s.captureDrafts).all().find((d) => d.captureId === cap.id)!;
     await onCardAction({ messageId: cap.reviewRef, operator: { openId: "ou_stranger" }, action: { value: { a: "ok", d: draft.id } } }, ch);
     expect(db.select().from(s.captureDrafts).all().find((d) => d.id === draft.id)!.status).toBe("pending");
+    const before = updated.length;
     await onCardAction({ messageId: cap.reviewRef, operator: { openId: "ou_me" }, action: { value: { a: "ok", d: draft.id } } }, ch);
     expect(db.select().from(s.captureDrafts).all().find((d) => d.id === draft.id)!.status).toBe("confirmed");
+    expect(updated.length).toBe(before); // 不在点击回调里改卡片（否则飞书会用旧卡片盖回去）
+    await new Promise((r) => setTimeout(r, 1700));
     expect(updated.at(-1)!.card.header.template).toBe("green");
     // 今天
     await onMessage(msg("ou_me", "今天", "x5"), ch);
@@ -218,5 +276,29 @@ describe("快捷指令密钥", () => {
     expect(checkCaptureKey(null)).toBe(false);
     revokeCaptureKey();
     expect(checkCaptureKey(k)).toBe(false);
+  });
+});
+
+describe("Ember 维护账本", () => {
+  it("首次建项目带基线决定和需求；同一问题再报只累计次数，3 次升 P0；飞书「记不了：」直接入账", async () => {
+    const { emberProject, reportFeedback, maintainerBrief } = await import("@/lib/services/maintenance");
+    const p = emberProject();
+    expect(emberProject().id).toBe(p.id); // 幂等
+    const b0 = maintainerBrief();
+    expect(b0.decisions.length).toBeGreaterThanOrEqual(8);
+    expect(b0.decisions.some((d) => d.title.includes("P0 不自动进"))).toBe(true);
+    expect(b0.requirements.some((r) => r.status === "accepted" && r.title.includes("收款"))).toBe(true);
+    const agentA = { type: "agent" as const, name: "cursor" }, agentB = { type: "agent" as const, name: "claude" };
+    const r1 = reportFeedback({ kind: "confusion", title: "同一件事被记成两条事项", example: "接支付 / 对接支付渠道" }, agentA);
+    const r2 = reportFeedback({ kind: "confusion", title: "同一件事被记成了两条事项", example: "备案 / ICP备案办理" }, agentB);
+    expect(r2.merged).toBe(true);
+    expect(r2.id).toBe(r1.id);
+    const r3 = reportFeedback({ kind: "confusion", title: "同一件事又被记成两条事项" }, agentA);
+    expect(r3.times).toBe(3);
+    const b = maintainerBrief();
+    const issue = b.open_issues.find((i) => i.id === r1.id)!;
+    expect(issue.priority).toBe("P0");
+    expect(issue.times).toBe(3);
+    expect(b.open_issues.filter((i) => i.title.includes("两条事项")).length).toBe(1);
   });
 });

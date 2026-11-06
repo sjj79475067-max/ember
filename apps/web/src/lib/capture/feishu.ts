@@ -30,6 +30,7 @@ function safeDecrypt(x: string) { try { return decryptKey(x); } catch { return "
 // ---------- 卡片（JSON 2.0） ----------
 const md = (content: string) => ({ tag: "markdown", content });
 const fmt = (sec: number | null) => (sec ? `${new Date(sec * 1000).getMonth() + 1}/${new Date(sec * 1000).getDate()}` : "");
+const fmtTime = (sec: number) => { const x = new Date(sec * 1000); return `${x.getMonth() + 1}/${x.getDate()} ${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`; };
 const esc = (t: string) => t.replace(/[<>]/g, (c) => (c === "<" ? "＜" : "＞"));
 
 export function buildReviewCard(v: ReviewView) {
@@ -41,7 +42,7 @@ export function buildReviewCard(v: ReviewView) {
   v.drafts.forEach((d, i) => {
     elements.push({ tag: "hr" });
     const proj = d.projectName ? `${d.projectName}${d.confidence && d.confidence < 70 ? "（不太确定）" : ""}` : "<font color='orange'>未定项目 → 收件箱</font>";
-    const meta = [`**${d.typeLabel}**`, proj, d.dueAt ? `截止 ${fmt(d.dueAt)}` : "", d.waitingFor ? `等 ${esc(d.waitingFor)}` : "", d.targetTitle ? `对应「${esc(d.targetTitle)}」` : ""].filter(Boolean).join(" · ");
+    const meta = [`**${d.typeLabel}**`, proj, d.remindAt ? `⏰ ${fmtTime(d.remindAt)} 提醒你` : d.dueAt ? `截止 ${fmt(d.dueAt)}` : "", d.waitingFor ? `等 ${esc(d.waitingFor)}` : "", d.targetTitle ? `对应「${esc(d.targetTitle)}」` : ""].filter(Boolean).join(" · ");
     const state = d.status === "confirmed" ? " <font color='green'>✓ 已落实</font>" : d.status === "rejected" ? " <font color='grey'>已忽略</font>" : "";
     elements.push(md(`${i + 1}. ${d.status === "rejected" ? `~~${esc(d.title)}~~` : `**${esc(d.title)}**`}${state}\n${meta}${d.evidence && d.status === "pending" ? `\n<font color='grey'>依据：${esc(d.evidence.slice(0, 80))}</font>` : ""}`));
     if (d.status === "pending") {

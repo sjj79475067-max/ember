@@ -33,6 +33,8 @@ export type UpdatePatch = {
   startAt?: number | null; leadTimeDays?: number | null;
   /** 秘书层：在等谁（空串=不等了）、什么时候催、计划哪天做（YYYY-MM-DD，空串=移出）、先放到哪天 */
   waitingFor?: string; followUpAt?: number | null; plannedFor?: string; deferUntil?: number | null;
+  /** 到点主动提醒（改时间会重新提醒） */
+  remindAt?: number | null;
 };
 
 const OPEN_STATUSES = ["todo", "doing", "blocked", "changed"] as const;
@@ -293,6 +295,7 @@ function applySecretaryPatch(cur: typeof s.items.$inferSelect, patch: UpdatePatc
     if (d !== cur.plannedFor) set.rollCount = 0;
   }
   if (patch.deferUntil !== undefined) set.deferUntil = patch.deferUntil;
+  if (patch.remindAt !== undefined && patch.remindAt !== cur.remindAt) { set.remindAt = patch.remindAt; set.remindedAt = null; }
   const finalStatus = (set.status as string | undefined) ?? cur.status;
   if (finalStatus === "done" || finalStatus === "dropped") {
     set.waitingFor = ""; set.followUpAt = null; set.plannedFor = ""; set.rollCount = 0;
