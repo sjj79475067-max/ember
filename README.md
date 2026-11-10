@@ -63,7 +63,7 @@ Ember 是你和所有 agent 的**单一入口**：任何 agent 连上它，就�
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/你的用户名/ember.git
+git clone https://github.com/sjj79475067-max/ember.git
 cd ember
 
 # 2. 生成密钥并配置
