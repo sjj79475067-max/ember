@@ -1,7 +1,7 @@
 # 管你屁事
 
 <div align="center">
-  <img src="./public/logo.svg" width="200" alt="管你屁事 Logo"/>
+  <img src="./public/logo.svg" width="160" alt="管你屁事 Logo"/>
   <p><strong>Agent 优先的贴身管家式事务中心</strong></p>
   <p>屁大点事都帮你管 — 让所有 AI Agent 知道自己在做什么、还有哪些没做完、资料在哪里</p>
 </div>
