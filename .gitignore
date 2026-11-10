@@ -11,3 +11,12 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 data/
+backups/
+*.db
+*.db-shm
+*.db-wal
+*.tgz
+*.key
+*.pem
+*secret*
+*token*
