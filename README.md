@@ -1,20 +1,26 @@
-# 你管我 (YouGuanWo)
+# 管你屁事
 
 <div align="center">
-  <img src="./public/logo.svg" width="160" alt="你管我 Logo"/>
-  <p><strong>Agent 优先的事务进度管理中心</strong></p>
-  <p>让所有 AI Agent 知道自己在做什么、还有哪些没做完、资料在哪里</p>
+  <img src="./public/logo.svg" width="200" alt="管你屁事 Logo"/>
+  <p><strong>Agent 优先的贴身管家式事务中心</strong></p>
+  <p>屁大点事都帮你管 — 让所有 AI Agent 知道自己在做什么、还有哪些没做完、资料在哪里</p>
 </div>
 
 ---
 
 ## 🎯 这是什么
 
-**你管我** 是一个**贴身管家式**的事务进度中心:
+**管你屁事** 是一个**贴身管家式**的事务进度中心:
 - 你告诉它任何事,它**实时记录**
 - Agent 随时连上它,就知道**该做什么、做到哪了**
 - 支持**自然语言检索**,不用记在哪个项目
 - 能**联通 Agent 处理执行层事务**(文件登记、提醒推送、条例检查)
+
+### 为什么叫"管你屁事"
+
+- **屁大点事都帮你管** — 从产品上线到续费订阅,从会议纪要到差旅报销,大事小事,统统记下
+- **有趣有梗** — 灵感来自经典熊猫头表情包"关你屁事",轻松幽默的产品调性
+- **Agent 协作** — 不是冷冰冰的工具,是你的贴身管家,什么屁事都能交给它
 
 ### 核心理念
 
@@ -76,13 +82,13 @@ docker compose up -d
 
 ### 2. Agent 接入
 
-"你管我"提供**双通道**接入:
+"管你屁事"提供**双通道**接入:
 
 #### MCP (推荐,Claude Code/Cursor/Cline)
 ```bash
 # Claude Code
 claude mcp add \
-  --name youguanwo \
+  --name guannipi \
   --transport http \
   --url http://localhost:3000/api/mcp \
   --header "Authorization: Bearer <你的token>"
@@ -161,13 +167,13 @@ npx tsc --noEmit -p .
 npx vitest run
 
 # 开发服务器(3100 端口,独立数据库)
-DATABASE_URL=file:/tmp/youguanwo-dev/db.sqlite \
+DATABASE_URL=file:/tmp/guannipi-dev/db.sqlite \
 APP_URL=http://localhost:3100 \
 npx next dev -p 3100
 
 # 端到端测试(6 个,仅对 3100)
 ADMIN_EMAIL=dev@test.local \
-ADMIN_PASS="$(cat /tmp/youguanwo-dev/pw)" \
+ADMIN_PASS="$(cat /tmp/guannipi-dev/pw)" \
 npx playwright test
 ```
 
@@ -220,11 +226,12 @@ MIT License — 随便用,随便改,随便商用。
 
 ---
 
-## 💬 为什么叫"你管我"
+## 💬 一句话总结
 
-- **直白**: 你(AI Agent)管我(的事务)
-- **有趣**: 既幽默又准确
-- **贴身**: 就像贴身管家,什么都能交给它
-- **协作**: Agent 不是工具,是你的搭档
+**屁大点事都帮你管 — 让 Agent 成为你的贴身管家,而不是对话框里的临时工。**
 
-**让 Agent 成为你的贴身管家,而不是对话框里的临时工。**
+---
+
+<div align="center">
+  <sub>灵感来自经典熊猫头表情包 · Made with ❤️ and a sense of humor</sub>
+</div>
