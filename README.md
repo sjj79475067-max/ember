@@ -1,200 +1,230 @@
-# Ember（淬）
+# 你管我 (YouGuanWo)
 
-**Agent 优先的事务进度管理中心** — 让所有 AI Agent 知道自己在做什么、还有哪些没做完、资料在哪里。
+<div align="center">
+  <img src="./public/logo.svg" width="160" alt="你管我 Logo"/>
+  <p><strong>Agent 优先的事务进度管理中心</strong></p>
+  <p>让所有 AI Agent 知道自己在做什么、还有哪些没做完、资料在哪里</p>
+</div>
 
-## 为什么做 Ember
+---
 
-当你让多个 AI agent（Claude Code、Cursor、豆包工作、龙虾等）做很多事时，问题来了：
-- 做了什么、还有哪些没做，全散落在各次对话里
-- 会议纪要 → 任务清单 → 完成核对 → 变更追踪 → 资料定位，没有归集
-- 多台电脑、多个项目，进度无法共享
+## 🎯 这是什么
 
-Ember 是你和所有 agent 的**单一入口**：任何 agent 连上它，就知道当前项目有哪些约定、有哪些事没做完、资料在哪；做完了能逐条核销并留下审计；你在一个漂亮的中文界面里看全局进度、批阅、检索、配置。
+**你管我** 是一个**贴身管家式**的事务进度中心:
+- 你告诉它任何事,它**实时记录**
+- Agent 随时连上它,就知道**该做什么、做到哪了**
+- 支持**自然语言检索**,不用记在哪个项目
+- 能**联通 Agent 处理执行层事务**(文件登记、提醒推送、条例检查)
 
-## 核心特性
+### 核心理念
 
-### 🤖 Agent 优先设计
+1. **Agent 优先**: 任何 Agent(Claude Code、Cursor、Codex、豆包、龙虾…)连上来,**第一次调用就是熟练工**,不用探索、不用记忆、不用学习。
+2. **单一真相源**: 所有进度、资料位置、拍板决定都在这里,不散落在聊天记录里。
+3. **贴身管家**: 不是被动工具,会主动提醒到期、检测拖延、反向管理 Agent("这个任务拖 3 次了,要不要换个做法?")。
 
-- **即插即用**：agent 接入即刻知道怎么用，无需探索
-- **双通道**：MCP (Streamable HTTP) + REST API，覆盖所有主流 agent
-- **自描述**：`/llms.txt`、OpenAPI、接入向导，配置一键复制
-- **熟练工记忆**：上下文在中心，agent 换台机器也能继续
+---
 
-### 📋 覆盖四大场景
+## ✨ 核心特性
 
-**批次 1 — 项目看板**
-- GTD 风格看板：Todo / Doing / Blocked / Done / Changed
-- 阶段门与里程碑：每个阶段的必过项和交付物
-- 甘特图与依赖：可视化项目时间线
-- 防流水账：合并进展、完成证据核实
+### 第一批:看板与阶段门
+- **项目看板**: IT 项目/公司事务/客户项目/知识库,每个项目独立清单
+- **阶段门**: 必须完成某些关键项才能进入下一阶段(例如:产品上线前必须有备份恢复演练)
+- **防流水账**: 同一事项多次进展自动合并,完成证据自动核实
+- **依赖管理**: "A 做完才能做 B",自动提醒解锁
 
-**批次 2 — 公司事务**
-- 资产台账：设备、软件、账号，到期提醒
-- 采购记录：供应商、合同、发票、保修
-- 客户管理：联系人、商机、交付
-- 行程日历：iCal 订阅，跨设备同步
+### 第二批:公司事务台账
+- **资产**: 服务器/域名/证书/软件订阅,到期自动提醒
+- **采购**: 供应商/合同/发票/收货,全流程追踪
+- **客户关系**: 线索→商机→成交→续费,每次沟通都有记录
+- **差旅**: 行程/住宿/报销,一站式管理
+- **日历**: 会议/截止日/生日提醒,与清单联动
 
-**批次 3 — 秘书层**
-- 今日计划：自动滚动昨日未完成、P0 事项、到期提醒
-- 在等别人：Waiting For 列表与跟进日期
-- 拍板队列：需要决策的事项集中处理
-- 每周复盘：Top 3 回顾与下周计划
+### 第三批:秘书层
+- **今日**: 自动汇总今天要做的(逾期、到期、P0、已计划、在等别人)
+- **拍板队列**: 需要决策的事项(政策待批、被阻塞项、客户下一步)
+- **拖延检测**: 同一任务在"今日"出现 3 次?给出拖延提示和建议
+- **每周复盘**: 本周完成了什么、下周 Top 3、反思与调整
 
-**批次 4 — 随手记**
-- 飞书长连接机器人：语音/文字 → AI 整理成草稿 → 确认后落库
-- 快捷指令：iPhone/Mac 直接投递
-- 网页收集：URL + 笔记 → 归档到项目
+### 第四批:随手记
+- **飞书消息**: 发条消息给机器人→AI 整理成草稿清单→你确认→自动归档到项目
+- **快捷指令**: iPhone/Mac 快捷指令投递,语音/文字都行
+- **网页收集**: 开个网页窗口,随手贴,定时整理
+- **到点提醒**: "明天下午 3 点提醒我给客户打电话"→时间到了推飞书卡片
 
-### 🔒 数据安全
+---
 
-- 自托管：Docker 一键部署，数据完全在你掌控
-- 文件不上传：资料由 agent 管理，中心只登记位置
-- 审计完整：所有写操作带 actor + reason + timestamp
-- 密码不存：台账只记保存位置，敏感信息加密存储
+## 🚀 快速开始
 
-## 快速开始
-
-### 前置要求
-
-- Docker 20+ 与 Docker Compose
-- Node.js 20+ (仅开发时需要)
-
-### 一键部署
+### 1. 本地运行(推荐新手)
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/sjj79475067-max/ember.git
 cd ember
 
-# 2. 生成密钥并配置
-cp .env.example .env
-openssl rand -base64 32  # 复制输出到 .env 的 SESSION_SECRET
+# 2. 生成密钥
+echo "SESSION_SECRET=$(openssl rand -base64 32)" > .env
+echo "APP_URL=http://localhost:3000" >> .env
 
-# 3. 启动容器
+# 3. 启动
 docker compose up -d
 
 # 4. 访问 http://localhost:3000
 ```
 
-首次访问会引导你创建管理员账号。
+首次访问会要求设置管理员账号。
 
-### Agent 接入
+### 2. Agent 接入
 
-启动后访问 `/connect` 页面，选择你的 agent 类型（Claude Code / Cursor / Codex 等），复制配置粘贴即可。
+"你管我"提供**双通道**接入:
 
-**Claude Code 示例**：
+#### MCP (推荐,Claude Code/Cursor/Cline)
 ```bash
-claude mcp add ember --transport http \
+# Claude Code
+claude mcp add \
+  --name youguanwo \
+  --transport http \
   --url http://localhost:3000/api/mcp \
-  --header "Authorization: Bearer YOUR_TOKEN"
+  --header "Authorization: Bearer <你的token>"
+
+# 获取 token:访问 http://localhost:3000/settings,创建 API Token
 ```
 
-## 架构
+#### REST (通用,任何 Agent)
+```bash
+# 1. 读取接入指南
+curl http://localhost:3000/llms.txt
 
-- **前端**：Next.js 15 App Router + React 19 + Tailwind v4
-- **后端**：同进程 API + MCP 服务器
-- **数据库**：SQLite (better-sqlite3) + Drizzle ORM
-- **MCP**：官方 `@modelcontextprotocol/sdk`，Streamable HTTP 无状态
+# 2. Onboard(Agent 首次连接,获取全局上下文)
+curl http://localhost:3000/api/v1/agent/onboard \
+  -H "Authorization: Bearer <token>"
 
-目录结构：
-```
-cc/
-├── apps/web/              # Next.js 主应用
-│   ├── src/
-│   │   ├── app/           # 页面与 API 路由
-│   │   ├── components/    # UI 组件
-│   │   └── lib/
-│   │       ├── services/  # 业务逻辑层
-│   │       ├── mcp/       # MCP 工具注册
-│   │       ├── capture/   # 随手记适配器
-│   │       └── db/        # 数据模型
-│   └── drizzle/           # SQL 迁移
-├── docs/                  # 规格与架构文档
-└── scripts/               # 备份、部署脚本
+# 返回:当前项目、待办提醒、条例摘要、下一步建议
 ```
 
-## 开发
+更多接入方式见 [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)
+
+---
+
+## 🏗️ 架构
+
+```
+┌─────────────────────────────────────────────────┐
+│  Web UI(React 19 + Tailwind v4 + shadcn/ui)   │
+├─────────────────────────────────────────────────┤
+│  API Layer                                      │
+│  ├─ /api/mcp         (MCP Streamable HTTP)    │
+│  ├─ /api/v1/*        (REST for all agents)    │
+│  └─ /api/capture/*   (Feishu/Shortcuts)       │
+├─────────────────────────────────────────────────┤
+│  Service Layer (business logic)                 │
+│  ├─ items/board/milestones/requirements        │
+│  ├─ assets/purchases/crm/trips/calendar        │
+│  ├─ secretary/reminders/policies/maintenance   │
+│  └─ capture(parse/channel/scheduler)           │
+├─────────────────────────────────────────────────┤
+│  Data Layer                                     │
+│  ├─ SQLite(better-sqlite3) + Drizzle ORM      │
+│  └─ 审计日志/变更历史/版本控制                    │
+└─────────────────────────────────────────────────┘
+```
+
+- **技术栈**: Next.js 15 App Router + TypeScript + SQLite
+- **部署**: Docker 单容器(755MB),内存占用 < 512MB
+- **数据**: 文件不存中心,只登记位置(机器名/路径/哈希/最近核验时间)
+- **AI**: 可选(仅用于导入拆分、陈旧检测、日报周报),可完全关闭
+
+---
+
+## 📖 文档
+
+- [SPEC-BATCH1.md](docs/SPEC-BATCH1.md) — 看板与阶段门详细规格
+- [SPEC-BATCH2.md](docs/SPEC-BATCH2.md) — 公司事务台账详细规格
+- [SPEC-BATCH3.md](docs/SPEC-BATCH3.md) — 秘书层详细规格
+- [SPEC-BATCH4.md](docs/SPEC-BATCH4.md) — 随手记详细规格
+- [AGENT-GUIDE.md](docs/AGENT-GUIDE.md) — Agent 接入完整指南
+- [MAINTAINER.md](docs/MAINTAINER.md) — 维护手册(改代码前必读)
+- [DEPLOY.md](docs/DEPLOY.md) — 三种部署方案详解
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 架构设计与决策记录
+
+---
+
+## 🔧 开发
 
 ```bash
 cd apps/web
 
 # 类型检查
-npx tsc --noEmit
+npx tsc --noEmit -p .
 
-# 单元测试
+# 单元测试(52 个)
 npx vitest run
 
-# 启动开发服务器 (端口 3100，独立数据库)
-DATABASE_URL=file:/tmp/ember-dev/ember.db \
+# 开发服务器(3100 端口,独立数据库)
+DATABASE_URL=file:/tmp/youguanwo-dev/db.sqlite \
 APP_URL=http://localhost:3100 \
 npx next dev -p 3100
 
-# 端到端测试
+# 端到端测试(6 个,仅对 3100)
 ADMIN_EMAIL=dev@test.local \
-ADMIN_PASS=test123 \
+ADMIN_PASS="$(cat /tmp/youguanwo-dev/pw)" \
 npx playwright test
 ```
 
-### 维护账本
+### 红线(改代码前必读)
 
-Ember 自己的开发也用 Ember 管理！项目内有个 **EMBER** 项目，记录所有决定、问题和需求：
+1. **不对正式实例做测试**: 正式实例端口 3000,测试只用 3100
+2. **部署前先备份**: `bash scripts/backup.sh`
+3. **改动前先读维护账本**: `node scripts/maintainer-brief.mjs`
+4. **新功能先记需求**: 在 EMBER 项目里记一条需求,再动手
+5. **不存任何密码或密钥原文**: 台账只记位置
 
-```bash
-# 读取维护账本（需要容器运行）
-node scripts/maintainer-brief.mjs
-
-# 或通过 MCP 工具
-maintainer_brief
-```
-
-修改代码前先读 `docs/MAINTAINER.md` 和维护账本，了解已定的做法和红线。
-
-## 生产部署
-
-详见 `docs/DEPLOYMENT-2026-11-11.md`。
-
-**生产级配置建议**：
-- Nginx 反向代理 + Let's Encrypt SSL
-- 或 Cloudflare Tunnel / 代理模式（自动 HTTPS + CDN + DDoS 防护）
-- 定期备份：`bash scripts/backup.sh`
-- 限制端口：`127.0.0.1:3000:3000`，避免直接暴露
-
-## 文档
-
-- [规格文档](docs/) — SPEC-BATCH1~4.md 详细功能说明
-- [维护手册](docs/MAINTAINER.md) — 红线、架构、测试、部署
-- [Agent 接入指南](docs/AGENT-GUIDE.md) — 工具清单与最佳实践
-
-## 设计理念
-
-1. **单一入口 → 渐进披露**：agent 一次 `onboard` 拿到所有上下文
-2. **工具面要小**：10-16 个语义化工具，描述精准
-3. **写操作可追溯**：全量审计，冲突用乐观锁
-4. **文件是引用而非复制**：默认仅登记位置
-5. **免费优先**：核心无付费依赖，AI 可完全关闭
-
-## 技术债与路线图
-
-当前已完成批次 1-4（看板、事务、秘书、随手记）。
-
-未来可能的方向：
-- 语音助手集成（ASR 已预留接口）
-- 多租户与团队协作
-- Webhook 出站通知
-- 更多渠道适配器（钉钉、企微、Slack）
-
-## 许可
-
-MIT License
-
-## 致谢
-
-感谢所有让 AI Agent 更好用的开源项目：
-- [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic 的 agent 互操作协议
-- [Next.js](https://nextjs.org/) — React 全栈框架
-- [Drizzle ORM](https://orm.drizzle.team/) — TypeScript ORM
-- [shadcn/ui](https://ui.shadcn.com/) — 可组合 UI 组件
+详见 [docs/MAINTAINER.md](docs/MAINTAINER.md)
 
 ---
 
-**Ember（淬）** — 让每个 agent 都是熟练工。
+## 🌐 部署
+
+三种方案任选:
+
+### 方案 1: Cloudflare Tunnel(推荐新手)
+- 免费、零配置、自动 HTTPS
+- 5 分钟从本机到公网
+
+### 方案 2: VPS + Nginx + Let's Encrypt
+- 完全自主、性能最优
+- 需要域名和 VPS
+
+### 方案 3: Cloudflare 代理模式
+- 隐藏源站 IP、抗 DDoS
+- 本项目实际使用方案
+
+详见 [docs/DEPLOY.md](docs/DEPLOY.md)
+
+---
+
+## 🤝 贡献
+
+欢迎提 Issue 和 PR!改代码前请:
+
+1. 读 [docs/MAINTAINER.md](docs/MAINTAINER.md) 了解架构和红线
+2. 跑 `node scripts/maintainer-brief.mjs` 看维护账本
+3. 确保单元测试和 e2e 测试全绿
+4. 提交信息写清楚做了什么、为什么
+
+---
+
+## 📜 许可
+
+MIT License — 随便用,随便改,随便商用。
+
+---
+
+## 💬 为什么叫"你管我"
+
+- **直白**: 你(AI Agent)管我(的事务)
+- **有趣**: 既幽默又准确
+- **贴身**: 就像贴身管家,什么都能交给它
+- **协作**: Agent 不是工具,是你的搭档
+
+**让 Agent 成为你的贴身管家,而不是对话框里的临时工。**
