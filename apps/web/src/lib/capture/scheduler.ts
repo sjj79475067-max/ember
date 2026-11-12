@@ -12,7 +12,6 @@ import { feishuConfig, feishuAdapter } from "./feishu";
 
 const GREETING = /(问安|问好|早安|早上好|叫我起床|叫醒我|喊我起床)/;
 const LATE_GRACE = 6 * 3600; // 电脑睡着错过的，6 小时内补发并说明晚了；更久的不补（免得半夜收到早上的问候）
-
 export async function notifyOwner(title: string, body: string) {
   const c = feishuConfig();
   if (c.ownerOpenId && feishuAdapter.status().connected && feishuAdapter.sendText) {
@@ -59,9 +58,29 @@ export async function runDueReminders(now = nowSec()) {
 }
 
 const g = globalThis as unknown as { __emberRemindTimer?: ReturnType<typeof setInterval> };
+
+/**
+ * 主动推送提醒：提醒引擎算出来的事，攒一批推给你。
+ * 每天至少来一次（早上汇总），P0 随时插队；同一件事不会天天刷屏。
+ */
+export async function runReminderPush() {
+  const c = feishuConfig();
+  if (!c.ownerOpenId || !feishuAdapter.status().connected) return { sent: false, reason: "飞书未连接" };
+  const { pendingPush, buildPushText, markPushed } = await import("./push");
+  const rows = pendingPush(20);
+  if (!rows.length) return { sent: false, reason: "没有要推的" };
+  const text = buildPushText(rows);
+  const r = await notifyOwner("有事等你", text.replace(/^管你屁事 · /, ""));
+  if (r.sent) markPushed(rows.map((x) => x.id));
+  return { sent: r.sent, via: r.via, count: rows.length };
+}
+
 export function startReminderLoop() {
   if (g.__emberRemindTimer) return;
-  const tick = () => { runDueReminders().catch((e) => console.warn("[remind] tick", (e as Error).message)); };
+  const tick = () => {
+    runDueReminders().catch((e) => console.warn("[remind] tick", (e as Error).message));
+    runReminderPush().catch((e) => console.warn("[remind] push", (e as Error).message));
+  };
   g.__emberRemindTimer = setInterval(tick, 30_000);
   setTimeout(tick, 5_000);
 }

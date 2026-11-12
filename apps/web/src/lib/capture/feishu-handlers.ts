@@ -3,6 +3,7 @@ import { ingestEnvelope, confirmDraft, rejectDraft, editDraft, confirmAll, revie
 import { secretaryOverview } from "@/lib/services/secretary";
 import { db, s } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import type { Actor } from "@/lib/audit";
 
 type Ch = {
   send(to: string, input: object, opts?: { replyTo?: string }): Promise<{ messageId: string }>;
@@ -27,6 +28,7 @@ function refreshCardLater(ch: Ch, messageId: string, build: () => Promise<object
 }
 
 const reply = (ch: Ch, m: Msg, text: string) => ch.send(m.chatId, { markdown: text }, { replyTo: m.messageId }).catch(() => undefined);
+function safeJson(s: string): unknown { try { return JSON.parse(s); } catch { return null; } }
 
 /** 收到消息。只处理绑定的本人；其他人一律不理（不回话、不落库） */
 export async function onMessage(m: Msg, ch: Ch) {
@@ -35,7 +37,7 @@ export async function onMessage(m: Msg, ch: Ch) {
   if (!c.ownerOpenId || c.ownerOpenId !== m.senderId) {
     if (m.chatType === "p2p") {
       const b = tryBind(text, m.senderId, m.senderName ?? "");
-      if (b === true) return reply(ch, m, "✅ 绑定成功。以后直接发文字或语音给我，我整理好请你确认。\n发「今天」看今日安排。");
+      if (b === true) return reply(ch, m, "✅ 绑定成功。\n直接发话给我就行：问进展、说某件事做完了、说要买什么、要记一条想法——我都听得懂。\n发「今天」看今日安排，「待办」看全部提醒。");
       if (b === false) return reply(ch, m, "绑定码不对或已过期，请在 Ember「设置 → 随手记」重新生成。");
       if (!c.ownerOpenId) return reply(ch, m, "还没绑定。请在 Ember「设置 → 随手记」生成绑定码，然后发「绑定 123456」。");
     }
@@ -50,18 +52,29 @@ export async function onMessage(m: Msg, ch: Ch) {
     const r = reportFeedback({ kind, title: fb[2].split(/\n/)[0].slice(0, 100), example: fb[2] }, { type: "user", name: c.ownerName || "我（飞书）" });
     return reply(ch, m, r.merged ? `记到已有的问题上了（第 ${r.times} 次）。` : "记下了，维护 Ember 时处理。");
   }
-  let env;
+  // 语音先走整理（能识别成待办），不直接当命令
   if (m.rawContentType === "audio") {
     const res = m.resources.find((r) => r.type === "audio");
     if (!res) return reply(ch, m, "没收到语音文件，请重发。");
     const data = await ch.downloadResource(res.fileKey, "file");
-    env = { channel: "feishu", externalId: m.messageId, sender: m.senderId, chatRef: m.chatId, kind: "audio" as const, audio: { data, mime: "audio/ogg", fileName: `${res.fileKey}.opus` } };
-  } else if (["text", "post"].includes(m.rawContentType)) {
-    if (!text) return;
-    env = { channel: "feishu", externalId: m.messageId, sender: m.senderId, chatRef: m.chatId, kind: "text" as const, text };
-  } else {
+    const env0 = { channel: "feishu", externalId: m.messageId, sender: m.senderId, chatRef: m.chatId, kind: "audio" as const, audio: { data, mime: "audio/ogg", fileName: `${res.fileKey}.opus` } };
+    const r0 = await ingestEnvelope(env0);
+    if (r0.duplicate) return;
+    if (r0.capture.status === "failed") return reply(ch, m, `没整理成：${r0.capture.error}`);
+    const sent0 = await ch.send(m.chatId, { card: (await import("./feishu")).buildReviewCard(reviewView(r0.capture.id)) }, { replyTo: m.messageId });
+    setReviewRef(r0.capture.id, sent0.messageId);
+    return;
+  }
+  if (!["text", "post"].includes(m.rawContentType)) {
     return reply(ch, m, "目前只认文字和语音。图片和文件请到网页「导入」。");
   }
+  if (!text) return;
+
+  // 会话式处理：查询直接回，写操作给确认卡，剩下的走随手记草稿
+  const handled = await handleConversation(ch, m, text, c);
+  if (handled) return;
+
+  const env = { channel: "feishu", externalId: m.messageId, sender: m.senderId, chatRef: m.chatId, kind: "text" as const, text };
   const r = await ingestEnvelope(env);
   if (r.duplicate) return;
   if (r.capture.status === "failed") return reply(ch, m, `没整理成：${r.capture.error}`);
@@ -69,10 +82,98 @@ export async function onMessage(m: Msg, ch: Ch) {
   setReviewRef(r.capture.id, sent.messageId);
 }
 
+/**
+ * 会话式处理。返回 true 表示已经回过话了。
+ * - 查询：直接回结果
+ * - 变更：回一张确认卡，你点「确认」才落库
+ * - 不确定：返回 false，交给随手记草稿
+ */
+async function handleConversation(ch: Ch, m: Msg, text: string, c: ReturnType<typeof feishuConfig>): Promise<boolean> {
+  const { interpret, runIntent, feishuCtx } = await import("./feishu-converse");
+  let intent;
+  try {
+    intent = await interpret(text, feishuCtx(c.ownerName || "我（飞书）"));
+  } catch (e) {
+    console.warn("[feishu] 对话理解失败", (e as Error).message);
+    return false;
+  }
+  if (intent.action === "unknown") return false;
+
+  const ctx = feishuCtx(c.ownerName || "我（飞书）");
+
+  // 写操作：先给确认卡，你点「确认」才落库
+  if (intent.action === "tool" && intent.tool && isWriteTool(intent.tool)) {
+    const preview = intent.text || `要执行：${intent.tool}`;
+    const sent = await ch.send(m.chatId, { card: buildConfirmCard(preview, intent.tool, intent.args ?? {}) }, { replyTo: m.messageId });
+    pendingActions.set(sent.messageId, { intent, actor: ctx.actor });
+    return true;
+  }
+
+  const answer = await runIntent(intent, ctx);
+  await reply(ch, m, answer);
+  return true;
+}
+
+/** 需要确认的写工具 */
+function isWriteTool(name: string) {
+  return ["checklist_update", "checklist_progress", "checklist_add", "note_save", "decision_record",
+    "asset_save", "purchase_save", "deal_save", "trip_save", "item_move", "reminder_ack"].includes(name);
+}
+
+/** 待确认的写操作（按飞书消息 id 存） */
+const pendingActions = new Map<string, { intent: { tool?: string; args?: Record<string, unknown>; text?: string }; actor: Actor }>();
+
+/** 写操作的确认卡 */
+export function buildConfirmCard(preview: string, tool: string, args: Record<string, unknown>) {
+  const lines = Object.entries(args)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `**${k}**：${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .join("\n");
+  return {
+    schema: "2.0",
+    config: { update_multi: true, summary: { content: "等你确认" } },
+    header: { template: "orange", title: { tag: "plain_text", content: "确认执行？" } },
+    body: {
+      elements: [
+        { tag: "markdown", content: preview },
+        ...(lines ? [{ tag: "hr" }, { tag: "markdown", content: lines }] : []),
+        { tag: "hr" },
+        {
+          tag: "column_set", flex_mode: "flow", horizontal_spacing: "small",
+          columns: [
+            { tag: "column", width: "auto", elements: [{ tag: "button", text: { tag: "plain_text", content: "确认" }, type: "primary_filled", size: "small", behaviors: [{ type: "callback", value: { a: "run", t: tool } }] }] },
+            { tag: "column", width: "auto", elements: [{ tag: "button", text: { tag: "plain_text", content: "算了" }, type: "default", size: "small", behaviors: [{ type: "callback", value: { a: "skip" } }] }] },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 /** 点卡片按钮。只认本人；处理完更新这张卡 */
 export async function onCardAction(e: { messageId: string; chatId?: string; operator: { openId: string; name?: string }; action: { value: unknown; option?: string } }, ch: Ch) {
   const c = feishuConfig();
   if (!c.ownerOpenId || e.operator.openId !== c.ownerOpenId) return;
+
+  // 写操作确认卡：「确认」/「算了」
+  const raw = (typeof e.action.value === "string" ? safeJson(e.action.value) : e.action.value) as { a?: string; t?: string } | null;
+  if (raw?.a === "run" || raw?.a === "skip") {
+    const pending = pendingActions.get(e.messageId);
+    pendingActions.delete(e.messageId);
+    if (raw.a === "skip") {
+      if (e.chatId) await ch.send(e.chatId, { markdown: "好，不动。" }, { replyTo: e.messageId }).catch(() => undefined);
+      return;
+    }
+    if (!pending?.intent.tool) {
+      if (e.chatId) await ch.send(e.chatId, { markdown: "这个操作已经过期了，再说一次就行。" }, { replyTo: e.messageId }).catch(() => undefined);
+      return;
+    }
+    const { runIntent, feishuCtx } = await import("./feishu-converse");
+    const answer = await runIntent({ action: "tool", tool: pending.intent.tool, args: pending.intent.args }, feishuCtx(c.ownerName || "我（飞书）"));
+    if (e.chatId) await ch.send(e.chatId, { markdown: answer }, { replyTo: e.messageId }).catch(() => undefined);
+    return;
+  }
+
   const act = parseCardAction(e.action.value, e.action.option);
   if (!act) return;
   const actor = { type: "user" as const, name: c.ownerName || "我（飞书）" };

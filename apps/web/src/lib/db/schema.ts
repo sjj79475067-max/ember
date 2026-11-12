@@ -268,6 +268,8 @@ export const reminders = sqliteTable("reminders", {
   snoozedUntil: integer(),
   ackedAt: integer(),
   ackedBy: text().notNull().default(""),
+  /** 最后一次推给用户的时间，用来避免重复刷屏 */
+  pushedAt: integer(),
   createdAt: now(),
   updatedAt: now(),
 }, (t) => [index("idx_reminders_status").on(t.status, t.severity)]);
