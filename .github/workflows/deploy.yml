@@ -1,0 +1,49 @@
+name: 部署到生产服务器
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 部署到服务器
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 150.109.203.181
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+
+            # 备份
+            cd /opt/ember/src_git
+            sudo bash scripts/backup.sh
+
+            # 拉最新代码
+            sudo git pull origin main
+
+            # 重新构建镜像
+            sudo docker build -f apps/web/Dockerfile -t ember:latest .
+
+            # 重启容器
+            sudo docker compose up -d web
+
+            # 等待健康检查
+            echo "等待容器就绪..."
+            for i in $(seq 1 24); do
+              STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' ember-web-1 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "✅ 容器已就绪"
+                break
+              fi
+              echo "  $i/24 状态: $STATUS"
+              sleep 5
+            done
+
+            # 验证
+            curl -sf http://localhost:3000/api/health && echo "✅ 健康检查通过"
