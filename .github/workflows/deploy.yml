@@ -20,12 +20,14 @@ jobs:
           script: |
             set -e
 
-            # 备份
             cd /opt/ember/src_git
+
+            # 备份
             sudo bash scripts/backup.sh
 
-            # 拉最新代码
-            sudo git pull origin main
+            # 强制对齐远端（丢弃本地改动）
+            sudo git fetch origin main
+            sudo git reset --hard origin/main
 
             # 重新构建镜像
             sudo docker build -f apps/web/Dockerfile -t ember:latest .
