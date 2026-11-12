@@ -43,8 +43,8 @@ export function Sidebar({ user, unread, captures = 0 }: { user: { name: string; 
       <MobileNav path={path} unread={unread} captures={captures} onSearch={() => setPaletteOpen(true)} />
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-card)]/60 px-3 py-4 md:flex">
         <Link href="/" className="mb-4 flex items-center gap-2 px-2">
-          <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-brand)] text-sm font-bold text-white">淬</span>
-          <span className="font-semibold tracking-tight">Ember</span>
+          <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-brand)] text-sm font-bold text-white">管</span>
+          <span className="font-semibold tracking-tight">管你屁事</span>
         </Link>
         <button
           onClick={() => setPaletteOpen(true)}
@@ -103,8 +103,8 @@ function MobileNav({ path, unread, captures, onSearch }: { path: string; unread:
     <>
       <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-card)] px-3 md:hidden">
         <Link href="/" className="flex items-center gap-1.5">
-          <span className="grid size-6 place-items-center rounded-md bg-[var(--color-brand)] text-[11px] font-bold text-white">淬</span>
-          <span className="text-sm font-semibold">Ember</span>
+          <span className="grid size-6 place-items-center rounded-md bg-[var(--color-brand)] text-[11px] font-bold text-white">管</span>
+          <span className="text-sm font-semibold">管你屁事</span>
         </Link>
         <button onClick={onSearch} title="搜索" aria-label="搜索" className="ml-auto rounded-md p-1.5 text-[var(--color-muted)]"><Search className="size-4" /></button>
         <ThemeToggle />
