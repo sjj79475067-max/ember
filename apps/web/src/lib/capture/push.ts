@@ -1,87 +1,161 @@
 import { db, s } from "@/lib/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { nowSec } from "@/lib/id";
 import { refreshReminders } from "@/lib/services/reminders";
 
 /**
- * 提醒推送：把提醒引擎算出来的事主动推给用户。
+ * 提醒推送
  *
- * 之前提醒只写进数据库，没有任何出口——用户得自己开网页才知道。这里把
- * 「该知道的事」主动送到飞书私聊。
- *
- * 规则：
- * - P0 立刻推，P1/P2 按间隔推（同一件事别天天刷屏）
- * - 同一批里同类型的合并成一条，别一次弹十条
- * - 推过的记 pushedAt，不重复推
- * - 用户在提醒中心「已处理」后不再推
+ * 两种场景：
+ * 1. 「晨报/午报/晚报」：每天三次，把项目全量待办视图发给用户，完成的打钩，未完成的列出。
+ * 2. 「紧急插队」：P0 提醒（到期/逾期/严重阻塞）随时插队，不等整点。
  */
 
 const DAY = 86400;
-
-/** 提醒类型 → 飞书上的说法 */
-const KIND_LABEL: Record<string, string> = {
-  due: "快到期",
-  overdue: "已逾期",
-  blocked: "卡住了",
-  policy: "条例待确认",
-  stale_file: "资料要核验",
-  review: "要你看一眼",
-  digest: "摘要",
-};
-
-/** 同一提醒的最短重复间隔：P0 当天不重推，P1 三天，P2 一天 */
-const MIN_GAP: Record<string, number> = { P0: 6 * 3600, P1: 3 * DAY, P2: DAY };
-
 type Row = typeof s.reminders.$inferSelect;
+type ItemRow = typeof s.items.$inferSelect;
+type ProjRow = typeof s.projects.$inferSelect;
 
-/** 取待推的提醒：按严重度排，跳过推过的 */
-export function pendingPush(limit = 20): Row[] {
+// ─────────────────────────────────────────────
+// 1. P0 紧急推送（随时）
+// ─────────────────────────────────────────────
+
+/** 取未推过的 P0 提醒（6小时内不重复） */
+export function pendingUrgent(): Row[] {
   refreshReminders();
   const now = nowSec();
-  const rows = db.select().from(s.reminders).where(eq(s.reminders.status, "open")).all();
-  const out: Row[] = [];
-  for (const r of rows) {
-    const gap = MIN_GAP[r.severity] ?? DAY;
+  const rows = db
+    .select()
+    .from(s.reminders)
+    .where(and(eq(s.reminders.status, "open"), eq(s.reminders.severity, "P0")))
+    .all();
+  return rows.filter((r) => {
     const last = r.pushedAt ?? 0;
-    if (last && now - last < gap) continue;
-    out.push(r);
-  }
-  const order = { P0: 0, P1: 1, P2: 2 } as Record<string, number>;
-  return out.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9) || b.createdAt - a.createdAt).slice(0, limit);
+    return !last || now - last >= 6 * 3600;
+  });
 }
 
-/** 组装成一条推送消息 */
-export function buildPushText(rows: Row[]) {
+/** 组装 P0 紧急消息 */
+export function buildUrgentText(rows: Row[]): string {
   if (!rows.length) return "";
   const projName = new Map(db.select().from(s.projects).all().map((p) => [p.id, p.name]));
-  const lines: string[] = [];
-  const p0 = rows.filter((r) => r.severity === "P0");
-  const rest = rows.filter((r) => r.severity !== "P0");
+  const lines = ["🔴 **紧急：现在就得管**\n"];
+  for (const r of rows.slice(0, 8)) {
+    const proj = r.projectId ? projName.get(r.projectId) : null;
+    lines.push(`· ${r.title}${proj ? `（${proj}）` : ""}`);
+  }
+  if (rows.length > 8) lines.push(`…还有 ${rows.length - 8} 条`);
+  lines.push("\n回复「今天」看今日安排，「待办」看全部提醒。");
+  return lines.join("\n");
+}
 
-  const block = (title: string, list: Row[]) => {
-    if (!list.length) return;
-    lines.push(`**${title}**`);
-    for (const r of list.slice(0, 8)) {
-      const proj = r.projectId ? projName.get(r.projectId) : null;
-      lines.push(`· ${r.title}${proj ? `（${proj}）` : ""}`);
-    }
-    if (list.length > 8) lines.push(`…还有 ${list.length - 8} 条`);
-    lines.push("");
-  };
+// ─────────────────────────────────────────────
+// 2. 晨报/午报/晚报（三次整点汇总）
+// ─────────────────────────────────────────────
 
-  if (p0.length) block("🔴 现在就得管", p0);
-  if (rest.length) {
-    const byKind = new Map<string, Row[]>();
-    for (const r of rest) {
-      const k = r.kind in KIND_LABEL ? r.kind : "review";
-      if (!byKind.has(k)) byKind.set(k, []);
-      byKind.get(k)!.push(r);
-    }
-    const groups = [...byKind.entries()].sort((a, b) => b[1].length - a[1].length);
-    for (const [kind, list] of groups) block(KIND_LABEL[kind] ?? "要你看一眼", list);
+export type DigestType = "morning" | "noon" | "evening";
+
+/**
+ * 组装每日汇报：按项目分组，展示全量待办，完成的打钩。
+ * 格式：
+ *
+ *   ☀️ 晨报 · 2026-11-13
+ *
+ *   📁 管你屁事（3/8 完成）
+ *   ✅ 修复 MCP token 问题
+ *   ✅ 飞书机器人接入
+ *   ☐  上线提醒推送
+ *   ☐  测试晨报
+ *   … 还有 4 项
+ *
+ *   📁 读书会（0/2 完成）
+ *   ☐  确认下次选书
+ *   ☐  整理书单
+ *
+ *   回复「待办」看详情，「今天」看日程。
+ */
+export function buildDigestText(type: DigestType): string {
+  const now = nowSec();
+  const today = new Date(now * 1000);
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  const emoji = { morning: "☀️", noon: "🌤", evening: "🌙" }[type];
+  const label = { morning: "晨报", noon: "午报", evening: "晚报" }[type];
+
+  // 取活跃项目
+  const projects: ProjRow[] = db
+    .select()
+    .from(s.projects)
+    .where(and(ne(s.projects.status, "done"), ne(s.projects.status, "archived")))
+    .all();
+
+  if (!projects.length) {
+    return `${emoji} **${label} · ${dateStr}**\n\n暂无活跃项目。`;
   }
 
-  return `管你屁事 · ${rows.length} 件事等你\n\n${lines.join("\n").trim()}\n\n回复「今天」看今日安排，「待办」看全部提醒。`;
+  const lines: string[] = [`${emoji} **${label} · ${dateStr}**\n`];
+
+  for (const proj of projects.slice(0, 6)) {
+    // 取该项目的待办（非 dropped/changed）
+    const items: ItemRow[] = db
+      .select()
+      .from(s.items)
+      .where(
+        and(
+          eq(s.items.projectId, proj.id),
+          ne(s.items.status, "dropped"),
+          ne(s.items.status, "changed")
+        )
+      )
+      .orderBy(s.items.position)
+      .all();
+
+    if (!items.length) continue;
+
+    const done = items.filter((i) => i.status === "done");
+    const todo = items.filter((i) => i.status !== "done");
+
+    lines.push(`📁 **${proj.name}**（${done.length}/${items.length} 完成）`);
+
+    // 显示最近完成的（最多3条）
+    for (const it of done.slice(-3)) {
+      lines.push(`✅ ${it.title}`);
+    }
+    if (done.length > 3) {
+      lines.push(`✅ …还有 ${done.length - 3} 项已完成`);
+    }
+
+    // 显示未完成的（最多5条）
+    for (const it of todo.slice(0, 5)) {
+      const marker = it.status === "blocked" ? "🚫" : it.status === "doing" ? "🔄" : "☐ ";
+      const due = it.dueAt ? ` [${new Date(it.dueAt * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}]` : "";
+      lines.push(`${marker} ${it.title}${due}`);
+    }
+    if (todo.length > 5) {
+      lines.push(`☐  …还有 ${todo.length - 5} 项待办`);
+    }
+    lines.push("");
+  }
+
+  if (projects.length > 6) {
+    lines.push(`_另有 ${projects.length - 6} 个项目未展示_\n`);
+  }
+
+  lines.push("回复「待办」看全部提醒，「今天」看日程。");
+  return lines.join("\n").trim();
+}
+
+// ─────────────────────────────────────────────
+// 共用工具
+// ─────────────────────────────────────────────
+
+/** 兼容旧调用（scheduler 还在用） */
+export function pendingPush(limit = 20): Row[] {
+  return pendingUrgent().slice(0, limit);
+}
+
+export function buildPushText(rows: Row[]): string {
+  return buildUrgentText(rows);
 }
 
 /** 标记已推送 */
