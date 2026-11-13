@@ -208,12 +208,41 @@ export async function onCardAction(e: { messageId: string; chatId?: string; oper
 export function todayText() {
   const o = secretaryOverview();
   const lines = [`**今日 ${o.date}**`];
-  if (o.top3.length) lines.push(`本周三件事：${o.top3.map((x) => `${x.status === "done" ? "✅" : "⬜"}${x.title}`).join("；")}`);
-  lines.push(o.today.length ? o.today.slice(0, 8).map((i, n) => `${n + 1}. ${i.title}${i.projectName ? `（${i.projectName}）` : ""}`).join("\n") : "今天没有到期和计划的事。");
+  if (o.top3.length) {
+    lines.push(`本周三件事：${o.top3.map((x) => `${x.status === "done" ? "✅" : "⬜"}${x.title}`).join("；")}`);
+  }
+  if (!o.today.length) {
+    lines.push("今天没有到期和计划的事。");
+  } else {
+    const whyLabel: Record<string, string> = {
+      overdue: "已逾期", due_today: "今天到期", planned: "今天计划", doing: "进行中",
+    };
+    for (const i of o.today.slice(0, 10)) {
+      const proj = i.projectName ? `**${i.projectName}** — ` : "";
+      lines.push(`· ${proj}${i.title}`);
+      const meta: string[] = [];
+      if (i.priority) meta.push(i.priority);
+      if (i.why) meta.push(whyLabel[i.why] ?? i.why);
+      if (i.dueAt) {
+        const d = new Date(i.dueAt * 1000);
+        meta.push(`截止 ${d.getMonth() + 1}/${d.getDate()}`);
+      }
+      if (meta.length) lines.push(`  ${meta.join(" · ")}`);
+      if (i.blockReason) lines.push(`  🚫 阻塞：${i.blockReason}`);
+      if (i.waitingFor) lines.push(`  ⏳ 在等：${i.waitingFor}`);
+    }
+    if (o.today.length > 10) lines.push(`…还有 ${o.today.length - 10} 件`);
+  }
   const nudge = o.waiting.filter((w) => w.nudge);
-  if (nudge.length) lines.push(`🔔 该催了：${nudge.map((w) => `${w.title}（等 ${w.waitingFor}）`).join("；")}`);
+  if (nudge.length) {
+    lines.push("");
+    lines.push("🔔 该催了：");
+    for (const w of nudge.slice(0, 5)) {
+      lines.push(`· ${w.projectName ? `**${w.projectName}** — ` : ""}${w.title}（在等 ${w.waitingFor}）`);
+    }
+  }
   if (o.decisions.length) lines.push(`要你拍板 ${o.decisions.length} 件，到网页「今日」处理。`);
-  return lines.join("\n\n");
+  return lines.join("\n");
 }
 
 export const __test = { draftsOf };

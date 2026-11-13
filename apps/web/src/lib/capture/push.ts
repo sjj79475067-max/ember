@@ -42,7 +42,7 @@ export function buildUrgentText(rows: Row[]): string {
   const lines = ["🔴 **紧急：现在就得管**\n"];
   for (const r of rows.slice(0, 8)) {
     const proj = r.projectId ? projName.get(r.projectId) : null;
-    lines.push(`· ${r.title}${proj ? `（${proj}）` : ""}`);
+    lines.push(`· ${proj ? `**${proj}** — ` : ""}${r.title}`);
   }
   if (rows.length > 8) lines.push(`…还有 ${rows.length - 8} 条`);
   lines.push("\n回复「今天」看今日安排，「待办」看全部提醒。");
@@ -57,22 +57,28 @@ export type DigestType = "morning" | "noon" | "evening";
 
 /**
  * 组装每日汇报：按项目分组，展示全量待办，完成的打钩。
- * 格式：
+ * 每条事项要能独立看懂 —— 带上项目名、交付标准、优先级、截止日、阻塞原因。
  *
  *   ☀️ 晨报 · 2026-11-13
  *
- *   📁 管你屁事（3/8 完成）
- *   ✅ 修复 MCP token 问题
- *   ✅ 飞书机器人接入
- *   ☐  上线提醒推送
- *   ☐  测试晨报
- *   … 还有 4 项
+ *   📁 客户门户 V2 交付（2/6 完成）
+ *   _10 月底交付客户门户改版，含登录改造与数据看板。_
  *
- *   📁 读书会（0/2 完成）
- *   ☐  确认下次选书
- *   ☐  整理书单
+ *   ✅ P0 完成登录模块改造
+ *      交付标准：手机号+验证码登录上线，e2e 覆盖
+ *      截止 11/11 · 已完成 11/11
+ *      证据：截图：http://localhost:3000/p/IT ，e2e 通过
  *
- *   回复「待办」看详情，「今天」看日程。
+ *   🚫 P1 数据看板接入新指标
+ *      交付标准：GMV/留存/转化三个指标可在看板切换
+ *      🚫 阻塞：等待客户确认表单字段
+ *      截止 11/15
+ *
+ *   ☐ P0 登录模块改为手机号+验证码
+ *      交付标准：上线并通过 e2e
+ *      截止 11/11（已逾期 2 天）
+ *
+ *   回复「待办」看全部提醒，「今天」看日程。
  */
 export function buildDigestText(type: DigestType): string {
   const now = nowSec();
@@ -82,12 +88,13 @@ export function buildDigestText(type: DigestType): string {
   const emoji = { morning: "☀️", noon: "🌤", evening: "🌙" }[type];
   const label = { morning: "晨报", noon: "午报", evening: "晚报" }[type];
 
-  // 取活跃项目
+  // 取活跃项目（排除收件箱）
   const projects: ProjRow[] = db
     .select()
     .from(s.projects)
     .where(and(ne(s.projects.status, "done"), ne(s.projects.status, "archived")))
-    .all();
+    .all()
+    .filter((p) => p.status === "active" && p.isInbox !== 1);
 
   if (!projects.length) {
     return `${emoji} **${label} · ${dateStr}**\n\n暂无活跃项目。`;
@@ -95,8 +102,7 @@ export function buildDigestText(type: DigestType): string {
 
   const lines: string[] = [`${emoji} **${label} · ${dateStr}**\n`];
 
-  for (const proj of projects.slice(0, 6)) {
-    // 取该项目的待办（非 dropped/changed）
+  for (const proj of projects) {
     const items: ItemRow[] = db
       .select()
       .from(s.items)
@@ -116,33 +122,106 @@ export function buildDigestText(type: DigestType): string {
     const todo = items.filter((i) => i.status !== "done");
 
     lines.push(`📁 **${proj.name}**（${done.length}/${items.length} 完成）`);
+    if (proj.summaryMd) {
+      const summary = proj.summaryMd.trim().split("\n")[0].slice(0, 80);
+      if (summary) lines.push(`_${summary}_`);
+    }
+    lines.push("");
 
-    // 显示最近完成的（最多3条）
+    // 已完成：显示最近 3 条
     for (const it of done.slice(-3)) {
-      lines.push(`✅ ${it.title}`);
+      lines.push(...itemLines(it, "done", now));
     }
     if (done.length > 3) {
       lines.push(`✅ …还有 ${done.length - 3} 项已完成`);
     }
 
-    // 显示未完成的（最多5条）
-    for (const it of todo.slice(0, 5)) {
-      const marker = it.status === "blocked" ? "🚫" : it.status === "doing" ? "🔄" : "☐ ";
-      const due = it.dueAt ? ` [${new Date(it.dueAt * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}]` : "";
-      lines.push(`${marker} ${it.title}${due}`);
+    // 未完成：显示前 8 条（超出的只计数）
+    for (const it of todo.slice(0, 8)) {
+      lines.push(...itemLines(it, it.status, now));
     }
-    if (todo.length > 5) {
-      lines.push(`☐  …还有 ${todo.length - 5} 项待办`);
+    if (todo.length > 8) {
+      lines.push(`☐ …还有 ${todo.length - 8} 项待办`);
     }
     lines.push("");
   }
 
-  if (projects.length > 6) {
-    lines.push(`_另有 ${projects.length - 6} 个项目未展示_\n`);
-  }
-
   lines.push("回复「待办」看全部提醒，「今天」看日程。");
   return lines.join("\n").trim();
+}
+
+
+/**
+ * 交付标准是否真的有信息量。
+ * 历史上有一批数据是 "完成：<标题>" 这种把标题复制一遍的占位符，
+ * 展示出来等于没写，不如不显示。
+ */
+function meaningfulDef(def: string, title: string): string {
+  const d = def.trim();
+  if (!d) return "";
+  const stripped = d.replace(/^(完成|做完|交付)\s*[:：]?\s*/, "").trim();
+  if (!stripped) return "";
+  // 和标题基本一样 → 没有额外信息
+  const norm = (x: string) => x.replace(/[\s，。、,.:：;；!！?？]/g, "");
+  if (norm(stripped) === norm(title) || norm(title).includes(norm(stripped)) && norm(stripped).length > 6) return "";
+  return d.replace(/\n+/g, " ");
+}
+
+/** 一条事项的多行描述：标题 + 交付标准 + 状态信息 */
+function itemLines(it: ItemRow, status: string, now: number): string[] {
+  const marker =
+    status === "done" ? "✅" : status === "blocked" ? "🚫" : status === "doing" ? "🔄" : "☐";
+  const out: string[] = [];
+
+  out.push(`${marker} **${it.priority} ${it.title}**`);
+
+  // 交付标准：说明"做到什么算完成"
+  const def = meaningfulDef(it.doneDefinition, it.title);
+  if (def) {
+    out.push(`   交付标准：${def}`);
+  } else if (it.detailMd) {
+    const detail = it.detailMd.trim().split("\n")[0].slice(0, 100);
+    if (detail) out.push(`   ${detail}`);
+  }
+
+  // 阻塞原因
+  if (status === "blocked" && it.blockReason) {
+    out.push(`   🚫 阻塞：${it.blockReason}`);
+  }
+
+  // 等待对象
+  if (it.waitingFor) {
+    out.push(`   ⏳ 在等：${it.waitingFor}`);
+  }
+
+  // 截止日 / 完成时间 / 逾期
+  if (it.dueAt) {
+    const due = new Date(it.dueAt * 1000);
+    const dueStr = `${due.getMonth() + 1}/${due.getDate()}`;
+    if (status === "done") {
+      const doneAt = it.completedAt ? new Date(it.completedAt * 1000) : null;
+      out.push(
+        doneAt
+          ? `   截止 ${dueStr} · 已完成 ${doneAt.getMonth() + 1}/${doneAt.getDate()}`
+          : `   截止 ${dueStr}`
+      );
+    } else {
+      const overdue = now - it.dueAt;
+      if (overdue > 0) {
+        const days = Math.floor(overdue / 86400);
+        out.push(`   截止 ${dueStr}（已逾期 ${days > 0 ? `${days} 天` : "今天"}）`);
+      } else {
+        out.push(`   截止 ${dueStr}`);
+      }
+    }
+  }
+
+  // 完成证据
+  if (status === "done" && it.evidence) {
+    out.push(`   证据：${it.evidence.slice(0, 120)}`);
+  }
+
+  return out;
 }
 
 // ─────────────────────────────────────────────

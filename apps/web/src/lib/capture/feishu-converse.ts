@@ -164,15 +164,48 @@ function renderResult(tool: string, out: unknown): string {
   const d = o.data ?? {};
   switch (tool) {
     case "today": {
-      const items = (d.today ?? []) as Array<{ title: string; why?: string; project?: string }>;
+      const items = (d.today ?? []) as Array<{
+        title: string; why?: string; projectName?: string; priority?: string;
+        dueAt?: number | null; status?: string; blockReason?: string; waitingFor?: string;
+      }>;
       const counts = (d.counts ?? {}) as Record<string, number>;
       if (!items.length) return "今天没有到期和计划的事。";
-      return `今天 ${counts.today ?? items.length} 件：\n` + items.slice(0, 8).map((i, n) => `${n + 1}. ${i.title}${i.project ? `（${i.project}）` : ""}`).join("\n");
+      const whyLabel: Record<string, string> = {
+        overdue: "已逾期", due_today: "今天到期", planned: "今天计划", doing: "进行中",
+      };
+      const lines = [`**今天 ${counts.today ?? items.length} 件**`];
+      for (const i of items.slice(0, 10)) {
+        const why = i.why ? whyLabel[i.why] : "";
+        const proj = i.projectName ? `**${i.projectName}** — ` : "";
+        lines.push(`· ${proj}${i.title}`);
+        const meta: string[] = [];
+        if (i.priority) meta.push(i.priority);
+        if (why) meta.push(why);
+        if (i.dueAt) {
+          const d = new Date(i.dueAt * 1000);
+          meta.push(`截止 ${d.getMonth() + 1}/${d.getDate()}`);
+        }
+        if (meta.length) lines.push(`  ${meta.join(" · ")}`);
+        if (i.blockReason) lines.push(`  🚫 阻塞：${i.blockReason}`);
+        if (i.waitingFor) lines.push(`  ⏳ 在等：${i.waitingFor}`);
+      }
+      if (items.length > 10) lines.push(`…还有 ${items.length - 10} 件`);
+      return lines.join("\n");
     }
     case "reminders_pull": {
-      const rs = (d.reminders ?? []) as Array<{ title: string; severity: string }>;
+      const rs = (d.reminders ?? []) as Array<{
+        title: string; severity: string; bodyMd?: string; kind?: string;
+        projectName?: string; projectId?: string | null;
+      }>;
       if (!rs.length) return "没有待处理的提醒。";
-      return `待办 ${rs.length} 件：\n` + rs.slice(0, 10).map((r) => `· [${r.severity}] ${r.title}`).join("\n");
+      const lines = [`**待办 ${rs.length} 件**`];
+      for (const r of rs.slice(0, 12)) {
+        const proj = r.projectName ? `**${r.projectName}** — ` : "";
+        lines.push(`· ${proj}${r.title}`);
+        if (r.bodyMd) lines.push(`  ${r.bodyMd.slice(0, 120)}`);
+      }
+      if (rs.length > 12) lines.push(`…还有 ${rs.length - 12} 件`);
+      return lines.join("\n");
     }
     case "project_list": {
       const ps = (d.projects ?? []) as Array<{ key: string; name: string; progress?: { total: number; done: number } }>;

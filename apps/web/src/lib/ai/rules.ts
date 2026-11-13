@@ -41,7 +41,8 @@ export function extractDeterministic(text: string, now = Date.now()): { title: s
       if (t0 && !seen.has(t0)) {
         seen.add(t0);
         const owner0 = cleaned.match(OWNER_RE)?.[1];
-        items.push({ title: t0, detailMd: owner0 ? `负责人：${owner0}` : "", doneDefinition: `完成：${t0.slice(0, 40)}`, dueAt: parseDue(cleaned, now), priority: /(紧急|立即|今天|明天|截止)/.test(cleaned) ? "P0" : "P1" });
+        // 不填 doneDefinition：把标题复制一遍当"交付标准"是废话，不如留空让人来填
+        items.push({ title: t0, detailMd: owner0 ? `负责人：${owner0}` : "", doneDefinition: "", dueAt: parseDue(cleaned, now), priority: /(紧急|立即|今天|明天|截止)/.test(cleaned) ? "P0" : "P1" });
         if (items.length >= 30) break;
         continue;
       }
@@ -59,7 +60,7 @@ export function extractDeterministic(text: string, now = Date.now()): { title: s
     items.push({
       title: t,
       detailMd: owner ? `负责人：${owner}` : "",
-      doneDefinition: `完成：${t.slice(0, 40)}${t.length > 40 ? "…" : ""}`,
+      doneDefinition: "",
       dueAt: due,
       priority: /(紧急|立即|今天|明天|截止)/.test(cleaned) ? "P0" : "P1",
     });

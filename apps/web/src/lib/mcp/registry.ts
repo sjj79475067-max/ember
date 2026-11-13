@@ -687,7 +687,13 @@ export const tools: ToolDef[] = [
       void ctx;
       const p = i.project ? resolveProjectOrNull(i.project) : null;
       const rows = pullReminders({ projectId: p?.id, includeAcked: i.include_acked });
-      return envelope({ reminders: rows });
+      // 带上项目名，提醒列表才能看出是哪个项目的事
+      const names = new Map(db.select().from(s.projects).all().map((x) => [x.id, x.name]));
+      const reminders = rows.map((r) => ({
+        ...r,
+        projectName: r.projectId ? names.get(r.projectId) ?? "" : "",
+      }));
+      return envelope({ reminders });
     },
   },
   {
